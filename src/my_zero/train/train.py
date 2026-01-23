@@ -7,6 +7,10 @@ import torch.nn.functional as F
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import gymnasium as gym
+import pathlib
+import glob
+import os
+import json
 
 def save_checkpoint(path, net, optimizer, config, iteration):
     torch.save(
@@ -236,6 +240,8 @@ class Trainer():
         self.temperature_function = config.get("temperature_function", lambda it: 1.0)
         self.checkpoint_frquency = config.get("checkpoint_frequency", 20)
         self.checkpoint_path = config.get("checkpoint_path", None)
+        self.log_path = config.get("log_path", pathlib.Path("./logs"))
+        self.log_name = None
 
 
     def run_self_play_executor(self, replay, it):
@@ -264,10 +270,24 @@ class Trainer():
         return (avg_length, avg_reward)
 
 
+    def _start_log(self):
+        os.makedirs(self.log_path, exist_ok=True)
+        n_logs = glob.glob(str(self.log_path / "training_log_*.jsonl"))
+        log_idx = len(n_logs)
+        self.log_name = self.log_path / f"training_log_{log_idx}.jsonl"
+        log_dict = {"time_start": time.time(), "net_config": self.net_config}
+        with open(self.log_name, "w") as f:
+            f.write(json.dumps(log_dict) + "\n")
+
+    def _save_log(self, out_log):
+        with open(self.log_name, "a") as f:
+            f.write(json.dumps(out_log) + "\n")
+
 
     def train(self):
 
         output_log = []
+        self._start_log()
 
         replay = ReplayBuffer(capacity_episodes=self.replay_capacity_episodes)
         optimizer = torch.optim.Adam(self.net.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
@@ -322,6 +342,8 @@ class Trainer():
 
             output_log.append((it, stats))
             print(it, stats)
+
+            self._save_log({"iteration": it, **stats})
 
             if it % self.checkpoint_frquency == 0:
                 if self.checkpoint_path is None:
