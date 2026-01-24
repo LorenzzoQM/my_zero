@@ -1,5 +1,5 @@
 from my_zero.train.data import self_play_episode, ReplayBuffer
-from my_zero.models.networks import scalar_to_support, support, scale_value, MuZeroNet
+from my_zero.models.networks import scalar_to_support, scale_value, MuZeroNet
 from my_zero.MCTS.tree_search import MuZeroMCTS
 import numpy as np
 import torch
@@ -175,7 +175,7 @@ def train_step(net, optimizer, batch, K=5, n_step=5, gamma=0.997, device="cpu",
         # Value loss: MSE
         # value_loss = F.mse_loss(v_pred, target_vs[:, k])
         if return_logits_v:
-            target_dist = scalar_to_support(scale_value(target_vs[:, k]), support)
+            target_dist = scalar_to_support(scale_value(target_vs[:, k]), net.f.support)
             value_loss = -(target_dist * F.log_softmax(v_pred, dim=-1)).sum(dim=-1).mean()
         else:
             value_loss = F.mse_loss(v_pred, target_vs[:, k])
@@ -188,7 +188,7 @@ def train_step(net, optimizer, batch, K=5, n_step=5, gamma=0.997, device="cpu",
             s_next, r_pred = net.g(s, actions[:, k], return_logits=return_logits_r)
             # reward_loss = F.mse_loss(r_pred, target_rs[:, k])
             if return_logits_r:
-                target_dist_r = scalar_to_support(scale_value(target_rs[:, k]), support)
+                target_dist_r = scalar_to_support(scale_value(target_rs[:, k]), net.g.support)
                 reward_loss = -(target_dist_r * F.log_softmax(r_pred, dim=-1)).sum(dim=-1).mean()
             else:
                 reward_loss = F.mse_loss(r_pred, target_rs[:, k])

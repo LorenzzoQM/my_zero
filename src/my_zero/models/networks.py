@@ -2,11 +2,11 @@ import torch
 import torch.nn as nn
 from typing import Union
 
-
-SUPPORT_SIZE = 101
-SUPPORT_MIN = -50
-SUPPORT_MAX = 50
-support = torch.linspace(SUPPORT_MIN, SUPPORT_MAX, SUPPORT_SIZE)
+# This must be set per environment
+# SUPPORT_SIZE = 101
+# SUPPORT_MIN = -50
+# SUPPORT_MAX = 50
+# support = torch.linspace(SUPPORT_MIN, SUPPORT_MAX, SUPPORT_SIZE)
 
 def scale_value(x, eps=0.001):
     return torch.sign(x) * (torch.sqrt(torch.abs(x) + 1.0) - 1.0) + eps * x
@@ -113,7 +113,7 @@ class EncoderMLP(nn.Module):
 
 class DynamicsMLP(nn.Module):
 
-    def __init__(self, body: nn.Module, num_actions: int, action_embed_dim: int, reward_head: nn.Module | None = None, normalize_latent: str | None = "l2", output_probabilities: bool = False):
+    def __init__(self, body: nn.Module, num_actions: int, action_embed_dim: int, reward_head: nn.Module | None = None, normalize_latent: str | None = "l2", output_probabilities: bool = False, support: torch.Tensor = None):
 
         super().__init__()
         self.latent_dim = body.output_dim
@@ -124,6 +124,10 @@ class DynamicsMLP(nn.Module):
         self.normalize_latent = normalize_latent 
         self.action_embed = nn.Embedding(num_actions, action_embed_dim)
         self.output_probabilities = output_probabilities
+        self.support = support
+
+        if self.output_probabilities and self.support is None:
+            raise ValueError("support must be provided if output_probabilities is True")
 
     def forward(self, state: torch.Tensor, action: torch.Tensor, return_logits: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
 
@@ -142,12 +146,12 @@ class DynamicsMLP(nn.Module):
             return next_state, reward_logits.squeeze(-1)
         else:
             probs = nn.functional.softmax(reward_logits, dim=-1)
-            return next_state, inverse_scale_value(support_to_scalar(probs, support))
+            return next_state, inverse_scale_value(support_to_scalar(probs, self.support))
     
 
 class PredictorMLP(nn.Module):
 
-    def __init__(self, body: nn.Module, num_actions: int, output_probabilities: bool = False):
+    def __init__(self, body: nn.Module, num_actions: int, output_probabilities: bool = False, support: torch.Tensor = None):
 
         super().__init__()
         self.body = body
@@ -155,6 +159,10 @@ class PredictorMLP(nn.Module):
         self.policy_head = nn.Linear(self.body.output_dim, num_actions)
         self.value_head = nn.Linear(self.body.output_dim, SUPPORT_SIZE if output_probabilities else 1)
         self.output_probabilities = output_probabilities
+        self.support = support
+
+        if self.output_probabilities and self.support is None:
+            raise ValueError("support must be provided if output_probabilities is True")
 
     def forward(self, state: torch.Tensor, return_logits: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
 
@@ -168,7 +176,7 @@ class PredictorMLP(nn.Module):
             return logits, value_logits.squeeze(-1)
         else:
             probs = nn.functional.softmax(value_logits, dim=-1)
-            return logits, inverse_scale_value(support_to_scalar(probs, support))
+            return logits, inverse_scale_value(support_to_scalar(probs, self.support))
     
 
 class MuZeroNet(nn.Module):
