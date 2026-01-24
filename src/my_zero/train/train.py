@@ -280,6 +280,18 @@ class Trainer():
         
         return (avg_length, avg_reward)
 
+    @staticmethod
+    def _clean_config_dict(config):
+        clean_dict = {}
+        for key, value in config.items():
+            if isinstance(value, (torch.Tensor)):
+                clean_dict[key] = value.tolist()
+            elif isinstance(value, dict):
+                clean_dict[key] = Trainer._clean_config_dict(value)
+            else:
+                clean_dict[key] = value
+        return clean_dict
+
 
     def _start_log(self):
         os.makedirs(self.log_path, exist_ok=True)
@@ -287,8 +299,11 @@ class Trainer():
         log_idx = len(n_logs)
         self.log_name = self.log_path / f"training_log_{log_idx}.jsonl"
         log_dict = {"time_start": time.time(), "net_config": self.net_config}
+        
+        log_dict_clean = self._clean_config_dict(log_dict)
+
         with open(self.log_name, "w") as f:
-            f.write(json.dumps(log_dict) + "\n")
+            f.write(json.dumps(log_dict_clean) + "\n")
 
         if self.checkpoint_path is not None:
             os.makedirs(self.checkpoint_path, exist_ok=True)
