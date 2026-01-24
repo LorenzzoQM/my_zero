@@ -40,7 +40,7 @@ def load_checkpoint(path, net, optimizer=None, device="cpu"):
 
 
 def _worker_self_play(args):
-        env_id, net_config, net_state, temperature, mcts_num_simulations, seed = args
+        env_id, net_config, net_state, temperature, mcts_num_simulations, mcts_config, seed = args
 
         # Create env inside worker
         if isinstance(env_id, str):
@@ -55,7 +55,7 @@ def _worker_self_play(args):
         net.load_state_dict(net_state)
         net.eval()
 
-        mcts = MuZeroMCTS(net.f, net.g, num_actions=env.action_space.n, puct_opt="muzero", c_puct=1.0)
+        mcts = MuZeroMCTS(net.f, net.g, num_actions=env.action_space.n, **mcts_config)
 
         ep = self_play_episode(
             env=env,
@@ -226,6 +226,7 @@ class Trainer():
         self.replay_capacity_episodes = config.get("replay_capacity_episodes", 5000)
         self.min_replay_episodes_for_training = config.get("min_replay_episodes_for_training", 10)
         self.mcts_num_simulations = config.get("mcts_num_simulations", 50)
+        self.mcts_config_self_play = config.get("mcts_config_self_play", {"puct_opt": "muzero", "c_puct": 1.0})
         self.batch_size = config.get("batch_size", 64)
         self.K = config.get("K", 5)
         self.n_step = config.get("n_step", 5)
@@ -238,6 +239,7 @@ class Trainer():
         self.weight_decay = config.get("weight_decay", 1e-5)
         self.num_workers = config.get("num_workers", 1)
         self.temperature_function = config.get("temperature_function", lambda it: 1.0)
+        self.eval_frequency = config.get("eval_frequency", 10)
         self.checkpoint_frquency = config.get("checkpoint_frequency", 20)
         self.checkpoint_path = config.get("checkpoint_path", None)
         self.log_path = config.get("log_path", pathlib.Path("./logs"))
@@ -252,7 +254,7 @@ class Trainer():
         avg_reward = 0
 
         tasks = [
-            (env_id, self.net_config, net_state, self.temperature_function(it), self.mcts_num_simulations, self._seed + i)
+            (env_id, self.net_config, net_state, self.temperature_function(it), self.mcts_num_simulations, self.mcts_config_self_play, self._seed + i)
             for i in range(self.self_play_episodes_per_iteration)
         ]
         self._seed += self.self_play_episodes_per_iteration
@@ -331,7 +333,7 @@ class Trainer():
             stats["avg_self_play_length"] = avg_length
             stats["avg_self_play_reward"] = avg_reward
 
-            if it % 50 == 0:
+            if it % self.eval_frequency == 0:
                 eval_r = 0
                 eval_len = 0
                 for _ in range(4):
@@ -342,6 +344,9 @@ class Trainer():
                 print(f"Eval over 4 episodes: avg reward={eval_r/4}, avg length={eval_len/4}")
                 stats["eval_avg_reward"] = eval_r / 4
                 stats["eval_avg_length"] = eval_len / 4
+            else:
+                stats["eval_avg_reward"] = None
+                stats["eval_avg_length"] = None
 
             output_log.append((it, stats))
             print(it, stats)
