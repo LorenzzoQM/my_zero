@@ -245,6 +245,9 @@ class Trainer():
         self.log_path = config.get("log_path", pathlib.Path("./logs"))
         self.log_name = None
 
+        self.lr_scheduler = config.get("lr_scheduler", None)
+        self.lr_scheduler_params = config.get("lr_scheduler_params", {})
+
 
     def run_self_play_executor(self, replay, it):
         net_state = {k: v.cpu() for k, v in self.net.state_dict().items()}
@@ -296,6 +299,10 @@ class Trainer():
 
         replay = ReplayBuffer(capacity_episodes=self.replay_capacity_episodes)
         optimizer = torch.optim.Adam(self.net.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        if self.lr_scheduler is not None:
+            assert hasattr(torch.optim.lr_scheduler, self.lr_scheduler), f"Unknown lr_scheduler {self.lr_scheduler}"
+            scheduler_class = getattr(torch.optim.lr_scheduler, self.lr_scheduler)
+            scheduler = scheduler_class(optimizer, **self.lr_scheduler_params)
 
         for it in range(1, self.n_iterations):
             time_start = time.time()
@@ -327,11 +334,17 @@ class Trainer():
                 batch = replay.sample_positions(batch_size=self.batch_size)
                 stats = train_step(self.net, optimizer, batch, K=self.K, n_step=self.n_step, gamma=self.gamma, device=self.device)
 
+            if self.lr_scheduler is not None:
+                scheduler.step()
+
             time_end = time.time()
             print(f"Iteration {it} took {time_end - time_start:.2f} seconds")
             stats["iteration_time"] = time_end - time_start
             stats["avg_self_play_length"] = avg_length
             stats["avg_self_play_reward"] = avg_reward
+            stats["replay_size_episodes"] = len(replay.episodes)
+            stats["replay_size_transitions"] = len(replay)
+            stats["lr"] = optimizer.param_groups[0]['lr']
 
             if it % self.eval_frequency == 0:
                 eval_r = 0
