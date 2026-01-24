@@ -238,7 +238,11 @@ class Trainer():
         self.learning_rate = config.get("learning_rate", 1e-3)
         self.weight_decay = config.get("weight_decay", 1e-5)
         self.num_workers = config.get("num_workers", 1)
-        self.temperature_function = config.get("temperature_function", lambda it: 1.0)
+
+        self.temperature_scheduler_function = config.get("temperature_function", lambda it: 1.0)
+        self.c_puct_scheduler_function = config.get("c_puct_function", lambda it: 1.0)
+        self.dirichlet_eps_scheduler_function = config.get("dirichlet_eps_function", lambda it: 0.25)
+
         self.eval_frequency = config.get("eval_frequency", 10)
         self.checkpoint_frquency = config.get("checkpoint_frequency", 20)
         self.checkpoint_path = config.get("checkpoint_path", None)
@@ -256,8 +260,10 @@ class Trainer():
         avg_length = 0
         avg_reward = 0
 
+        self.mcts_config_self_play["dirichlet_eps"] = self.dirichlet_eps_scheduler_function(it)
+        self.mcts_config_self_play["c_puct"] = self.c_puct_scheduler_function(it)
         tasks = [
-            (env_id, self.net_config, net_state, self.temperature_function(it), self.mcts_num_simulations, self.mcts_config_self_play, self._seed + i)
+            (env_id, self.net_config, net_state, self.temperature_scheduler_function(it), self.mcts_num_simulations, self.mcts_config_self_play, self._seed + i)
             for i in range(self.self_play_episodes_per_iteration)
         ]
         self._seed += self.self_play_episodes_per_iteration
@@ -314,7 +320,7 @@ class Trainer():
                 avg_length = 0
                 avg_reward = 0
                 for i in range(self.self_play_episodes_per_iteration):
-                    ep = self_play_episode(self.env, self.net, self.mcts, temperature=self.temperature_function(it), device=self.device, mcts_num_simulations=self.mcts_num_simulations, seed=self._seed + i)
+                    ep = self_play_episode(self.env, self.net, self.mcts, temperature=self.temperature_scheduler_function(it), device=self.device, mcts_num_simulations=self.mcts_num_simulations, seed=self._seed + i)
                     replay.add_episode(ep)
                     avg_length += len(ep["rewards"])
                     avg_reward += sum(ep["rewards"])
