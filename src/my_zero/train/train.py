@@ -279,6 +279,9 @@ class Trainer():
         with open(self.log_name, "w") as f:
             f.write(json.dumps(log_dict) + "\n")
 
+        if self.checkpoint_path is not None:
+            os.makedirs(self.checkpoint_path, exist_ok=True)
+
     def _save_log(self, out_log):
         with open(self.log_name, "a") as f:
             f.write(json.dumps(out_log) + "\n")
@@ -347,8 +350,8 @@ class Trainer():
 
             if it % self.checkpoint_frquency == 0:
                 if self.checkpoint_path is None:
-                    save_checkpoint(f"muzero_cartpole_checkpoint_it{it}.pt", self.net, optimizer, self.net.config, it)
+                    save_checkpoint(f"checkpoint_it{it}.pt", self.net, optimizer, self.net.config, it)
                 else:
-                    save_checkpoint(self.checkpoint_path, self.net, optimizer, self.net.config, it)
+                    save_checkpoint(self.checkpoint_path / f"checkpoint_it{it}.pt", self.net, optimizer, self.net.config, it)
 
         return output_log
