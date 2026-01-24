@@ -2,12 +2,6 @@ import torch
 import torch.nn as nn
 from typing import Union
 
-# This must be set per environment
-# SUPPORT_SIZE = 101
-# SUPPORT_MIN = -50
-# SUPPORT_MAX = 50
-# support = torch.linspace(SUPPORT_MIN, SUPPORT_MAX, SUPPORT_SIZE)
-
 def scale_value(x, eps=0.001):
     return torch.sign(x) * (torch.sqrt(torch.abs(x) + 1.0) - 1.0) + eps * x
 
@@ -120,7 +114,7 @@ class DynamicsMLP(nn.Module):
         self.num_actions = num_actions
         self.action_embed_dim = action_embed_dim
         self.body = body
-        self.reward_head = reward_head or nn.Linear(self.latent_dim, SUPPORT_SIZE if output_probabilities else 1)
+        self.reward_head = reward_head or nn.Linear(self.latent_dim, len(support) if output_probabilities else 1)
         self.normalize_latent = normalize_latent 
         self.action_embed = nn.Embedding(num_actions, action_embed_dim)
         self.output_probabilities = output_probabilities
@@ -157,7 +151,7 @@ class PredictorMLP(nn.Module):
         self.body = body
         self.num_actions = num_actions
         self.policy_head = nn.Linear(self.body.output_dim, num_actions)
-        self.value_head = nn.Linear(self.body.output_dim, SUPPORT_SIZE if output_probabilities else 1)
+        self.value_head = nn.Linear(self.body.output_dim, len(support) if output_probabilities else 1)
         self.output_probabilities = output_probabilities
         self.support = support
 
