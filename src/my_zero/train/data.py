@@ -45,17 +45,7 @@ def self_play_episode(env, net, mcts, temperature: float, device="cpu", max_step
                 add_root_noise=True,
             )
 
-        # Policy target = normalized visits
-        pi = visit_counts.astype(np.float32)
-        pi = pi / (pi.sum() + 1e-8)
-
-        # Sample action from visits (temperature schedule)
-        if temperature <= 1e-8:
-            action = int(np.argmax(visit_counts))
-        else:
-            probs = pi ** (1.0 / temperature)
-            probs = probs / (probs.sum() + 1e-12)
-            action = int(np.random.choice(len(probs), p=probs))
+        action, pi_target = mcts.select_action_from_visits(visit_counts, temperature=temperature, return_pi=True)
 
         # Step env
         next_obs, reward, terminated, truncated, _ = env.step(action)
@@ -66,7 +56,7 @@ def self_play_episode(env, net, mcts, temperature: float, device="cpu", max_step
         episode["actions"].append(action)
         episode["rewards"].append(float(reward))
         episode["dones"].append(done)
-        episode["pis"].append(pi)
+        episode["pis"].append(pi_target)
         episode["legal_masks"].append(legal_mask.astype(np.float32))
         episode["root_v_est"].append(float(root_v_est))
 

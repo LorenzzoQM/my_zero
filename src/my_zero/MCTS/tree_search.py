@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 import math
 import numpy as np
 import torch
@@ -216,11 +216,16 @@ class MuZeroMCTS:
         return e / (np.sum(e) + 1e-8)
     
     @staticmethod
-    def select_action_from_visits(visit_counts: np.ndarray, temperature: float) -> int:
+    def select_action_from_visits(visit_counts: np.ndarray, temperature: float, return_pi: bool) -> Union[int, tuple[int, np.ndarray]]:
         if temperature <= 1e-8:
-            return int(np.argmax(visit_counts))
+            action = int(np.argmax(visit_counts))
+            pi_target = np.zeros_like(visit_counts, dtype=np.float32)
+            pi_target[action] = 1.0
+        else:
+            pi_target = visit_counts ** (1.0 / temperature)
+            pi_target = pi_target / (pi_target.sum() + 1e-12)
+            action = int(np.random.choice(len(pi_target), p=pi_target))
 
-        counts = visit_counts.astype(np.float64)
-        probs = counts ** (1.0 / temperature)
-        probs /= probs.sum() + 1e-12
-        return int(np.random.choice(len(visit_counts), p=probs))
+        if return_pi:
+            return action, pi_target
+        return action
