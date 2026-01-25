@@ -1,6 +1,7 @@
 from my_zero.train.data import self_play_episode, ReplayBuffer
 from my_zero.models.networks import scalar_to_support, scale_value, MuZeroNet
 from my_zero.MCTS.tree_search import MuZeroMCTS
+from my_zero.train.workers import _init_self_play_worker, _worker_self_play_one_episode
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -59,6 +60,7 @@ def _worker_self_play(args):
 
     # Rebuild net + mcts inside worker (you implement these builders)
     net = MuZeroNet(net_config=net_config)
+    net = torch.compile(net)
     net.load_state_dict(net_state)
     net.eval()
 
@@ -267,7 +269,6 @@ class Trainer:
         self,
         env,
         net,
-        mcts,
         device="cpu",
         config={},
         net_config=None,
@@ -276,13 +277,14 @@ class Trainer:
     ):
         self.env = env
         self.net = net
-        self.mcts = mcts
         self.device = device
         self.net_config = net_config
         self._set_config(config)
         self._seed = 1234
         self.env_args = env_args
         self.eval_env_args = eval_env_args if eval_env_args is not None else env_args
+
+        self.net = torch.compile(self.net).to(self.device)
 
     def _set_config(self, config):
         self.SGD_steps_per_iteration = config.get("SGD_steps_per_iteration", 32)
@@ -326,37 +328,60 @@ class Trainer:
         self.lr_scheduler = config.get("lr_scheduler", None)
         self.lr_scheduler_params = config.get("lr_scheduler_params", {})
 
-    def run_self_play_executor(self, replay, it):
-        net_state = {k: v.cpu() for k, v in self.net.state_dict().items()}
+        self.net_class = config.get("net_class", MuZeroNet)
+        self.mcts_class = config.get("mcts_class", MuZeroMCTS)
 
-        avg_length = 0
-        avg_reward = 0
+    def _get_self_play_pool(self):
+        if getattr(self, "_self_play_pool", None) is None:
+            self._self_play_pool = ProcessPoolExecutor(
+                max_workers=self.num_workers,
+                initializer=_init_self_play_worker,
+                initargs=(
+                    self.env,
+                    self.env_args,
+                    self.net_class,
+                    self.mcts_class,
+                    self.net_config,
+                    self.device,
+                ),
+            )
+        return self._self_play_pool
+
+    def run_self_play_executor(self, replay, it):
+        base = self.net._orig_mod if hasattr(self.net, "_orig_mod") else self.net
+        net_state = {k: v.detach().cpu() for k, v in base.state_dict().items()}
 
         self.mcts_config_self_play["dirichlet_eps"] = (
             self.dirichlet_eps_scheduler_function(it)
         )
         self.mcts_config_self_play["c_puct"] = self.c_puct_scheduler_function(it)
-        tasks = [
-            (
-                self.env,
-                self.env_args,
-                self.net_config,
-                net_state,
-                self.temperature_scheduler_function(it),
-                self.mcts_num_simulations,
-                self.mcts_config_self_play,
-                self._seed + i,
+
+        temp = self.temperature_scheduler_function(it)
+
+        pool = self._get_self_play_pool()
+
+        futures = []
+        for i in range(self.self_play_episodes_per_iteration):
+            futures.append(
+                pool.submit(
+                    _worker_self_play_one_episode,
+                    net_state,  # CPU weights dict
+                    temp,
+                    self.mcts_class,
+                    self.mcts_num_simulations,
+                    self.mcts_config_self_play,
+                    self._seed + i,
+                )
             )
-            for i in range(self.self_play_episodes_per_iteration)
-        ]
         self._seed += self.self_play_episodes_per_iteration
 
-        with ProcessPoolExecutor(max_workers=self.num_workers) as ex:
-            futures = [ex.submit(_worker_self_play, t) for t in tasks]
-            for fut in as_completed(futures):
-                replay.add_episode(fut.result())
-                avg_length += len(fut.result()["rewards"])
-                avg_reward += sum(fut.result()["rewards"])
+        avg_length = 0.0
+        avg_reward = 0.0
+        for fut in as_completed(futures):
+            ep = fut.result()
+            replay.add_episode(ep)
+            avg_length += len(ep["rewards"])
+            avg_reward += sum(ep["rewards"])
 
         avg_length /= self.self_play_episodes_per_iteration
         avg_reward /= self.self_play_episodes_per_iteration
