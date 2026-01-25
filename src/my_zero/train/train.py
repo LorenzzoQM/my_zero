@@ -12,6 +12,7 @@ import glob
 import os
 import json
 
+
 def save_checkpoint(path, net, optimizer, config, iteration):
     torch.save(
         {
@@ -38,37 +39,44 @@ def load_checkpoint(path, net, optimizer=None, device="cpu"):
     return iteration, config
 
 
-
 def _worker_self_play(args):
-        env_id, net_config, net_state, temperature, mcts_num_simulations, mcts_config, seed = args
+    (
+        env_id,
+        env_args,
+        net_config,
+        net_state,
+        temperature,
+        mcts_num_simulations,
+        mcts_config,
+        seed,
+    ) = args
 
-        # Create env inside worker
-        if isinstance(env_id, str):
-            env = gym.make(env_id)
-        else:
-            env = env_id()
+    # Create env inside worker
+    if isinstance(env_id, str):
+        env = gym.make(env_id, **env_args)
+    else:
+        env = env_id(**env_args)
 
-        # Rebuild net + mcts inside worker (you implement these builders)
-        net = MuZeroNet(
-            net_config=net_config
-        )
-        net.load_state_dict(net_state)
-        net.eval()
+    # Rebuild net + mcts inside worker (you implement these builders)
+    net = MuZeroNet(net_config=net_config)
+    net.load_state_dict(net_state)
+    net.eval()
 
-        mcts = MuZeroMCTS(net.f, net.g, num_actions=env.action_space.n, **mcts_config)
+    mcts = MuZeroMCTS(net.f, net.g, num_actions=env.action_space.n, **mcts_config)
 
-        ep = self_play_episode(
-            env=env,
-            net=net,
-            mcts=mcts,
-            temperature=temperature,
-            device="cpu",   # usually best for many workers
-            mcts_num_simulations=mcts_num_simulations,
-            seed=seed
-        )
+    ep = self_play_episode(
+        env=env,
+        net=net,
+        mcts=mcts,
+        temperature=temperature,
+        device="cpu",  # usually best for many workers
+        mcts_num_simulations=mcts_num_simulations,
+        seed=seed,
+    )
 
-        env.close()
-        return ep
+    env.close()
+    return ep
+
 
 def make_targets(ep: dict, t0: int, K: int, n_step: int, gamma: float):
     T = len(ep["actions"])
@@ -99,7 +107,7 @@ def make_targets(ep: dict, t0: int, K: int, n_step: int, gamma: float):
         for i in range(n_step):
             ti = t + i
             if ti < T:
-                v += (gamma ** i) * ep["rewards"][ti]
+                v += (gamma**i) * ep["rewards"][ti]
                 if ep["dones"][ti]:
                     break
                 if i == n_step - 1:
@@ -109,19 +117,40 @@ def make_targets(ep: dict, t0: int, K: int, n_step: int, gamma: float):
                         if ep["dones"][j]:
                             break
                     break
-        
+
         target_vs.append(v)
 
-    return np.array(target_pis), np.array(target_rs, dtype=np.float32), np.array(target_vs, dtype=np.float32)
+    return (
+        np.array(target_pis),
+        np.array(target_rs, dtype=np.float32),
+        np.array(target_vs, dtype=np.float32),
+    )
 
 
-def train_step(net, optimizer, batch, K=5, n_step=5, gamma=0.997, device="cpu",
-               w_policy=1.0, w_value=1.0, w_reward=1.0):
+def train_step(
+    net,
+    optimizer,
+    batch,
+    K=5,
+    n_step=5,
+    gamma=0.997,
+    device="cpu",
+    w_policy=1.0,
+    w_value=1.0,
+    w_reward=1.0,
+):
     """
     batch: list of (episode, t0)
     """
     # Build tensors
-    obs0_list, action_seqs, target_pis_list, target_rs_list, target_vs_list, legal_masks_list = [], [], [], [], [], []
+    (
+        obs0_list,
+        action_seqs,
+        target_pis_list,
+        target_rs_list,
+        target_vs_list,
+        legal_masks_list,
+    ) = ([], [], [], [], [], [])
 
     for ep, t0 in batch:
         obs0_list.append(ep["obs"][t0])
@@ -135,8 +164,8 @@ def train_step(net, optimizer, batch, K=5, n_step=5, gamma=0.997, device="cpu",
 
         pis, rs, vs = make_targets(ep, t0, K=K, n_step=n_step, gamma=gamma)
         target_pis_list.append(pis)  # (K+1, A)
-        target_rs_list.append(rs)    # (K+1,)
-        target_vs_list.append(vs)    # (K+1,)
+        target_rs_list.append(rs)  # (K+1,)
+        target_vs_list.append(vs)  # (K+1,)
 
         # optional masks aligned with policy outputs
         masks = []
@@ -148,12 +177,24 @@ def train_step(net, optimizer, batch, K=5, n_step=5, gamma=0.997, device="cpu",
                 masks.append(ep["legal_masks"][0])
         legal_masks_list.append(masks)
 
-    obs0 = torch.as_tensor(np.array(obs0_list), dtype=torch.float32, device=device)                  # (B, obs_dim)
-    actions = torch.as_tensor(np.array(action_seqs), dtype=torch.long, device=device)                # (B, K)
-    target_pis = torch.as_tensor(np.array(target_pis_list), dtype=torch.float32, device=device)      # (B, K+1, A)
-    target_rs = torch.as_tensor(np.array(target_rs_list), dtype=torch.float32, device=device)        # (B, K+1)
-    target_vs = torch.as_tensor(np.array(target_vs_list), dtype=torch.float32, device=device)        # (B, K+1)
-    legal_masks = torch.as_tensor(np.array(legal_masks_list), dtype=torch.float32, device=device)    # (B, K+1, A)
+    obs0 = torch.as_tensor(
+        np.array(obs0_list), dtype=torch.float32, device=device
+    )  # (B, obs_dim)
+    actions = torch.as_tensor(
+        np.array(action_seqs), dtype=torch.long, device=device
+    )  # (B, K)
+    target_pis = torch.as_tensor(
+        np.array(target_pis_list), dtype=torch.float32, device=device
+    )  # (B, K+1, A)
+    target_rs = torch.as_tensor(
+        np.array(target_rs_list), dtype=torch.float32, device=device
+    )  # (B, K+1)
+    target_vs = torch.as_tensor(
+        np.array(target_vs_list), dtype=torch.float32, device=device
+    )  # (B, K+1)
+    legal_masks = torch.as_tensor(
+        np.array(legal_masks_list), dtype=torch.float32, device=device
+    )  # (B, K+1, A)
 
     # Forward unroll
     s = net.h(obs0)  # (B, latent_dim)
@@ -176,7 +217,9 @@ def train_step(net, optimizer, batch, K=5, n_step=5, gamma=0.997, device="cpu",
         # value_loss = F.mse_loss(v_pred, target_vs[:, k])
         if return_logits_v:
             target_dist = scalar_to_support(scale_value(target_vs[:, k]), net.f.support)
-            value_loss = -(target_dist * F.log_softmax(v_pred, dim=-1)).sum(dim=-1).mean()
+            value_loss = (
+                -(target_dist * F.log_softmax(v_pred, dim=-1)).sum(dim=-1).mean()
+            )
         else:
             value_loss = F.mse_loss(v_pred, target_vs[:, k])
 
@@ -188,14 +231,22 @@ def train_step(net, optimizer, batch, K=5, n_step=5, gamma=0.997, device="cpu",
             s_next, r_pred = net.g(s, actions[:, k], return_logits=return_logits_r)
             # reward_loss = F.mse_loss(r_pred, target_rs[:, k])
             if return_logits_r:
-                target_dist_r = scalar_to_support(scale_value(target_rs[:, k]), net.g.support)
-                reward_loss = -(target_dist_r * F.log_softmax(r_pred, dim=-1)).sum(dim=-1).mean()
+                target_dist_r = scalar_to_support(
+                    scale_value(target_rs[:, k]), net.g.support
+                )
+                reward_loss = (
+                    -(target_dist_r * F.log_softmax(r_pred, dim=-1)).sum(dim=-1).mean()
+                )
             else:
                 reward_loss = F.mse_loss(r_pred, target_rs[:, k])
             total_reward_loss = total_reward_loss + reward_loss / K
             s = s_next
 
-    loss = w_policy * total_policy_loss + w_value * total_value_loss + w_reward * total_reward_loss
+    loss = (
+        w_policy * total_policy_loss
+        + w_value * total_value_loss
+        + w_reward * total_reward_loss
+    )
 
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
@@ -209,9 +260,20 @@ def train_step(net, optimizer, batch, K=5, n_step=5, gamma=0.997, device="cpu",
         "reward_loss": float(total_reward_loss.item()),
     }
 
-class Trainer():
 
-    def __init__(self, env, net, mcts, device="cpu", config={}, net_config=None):
+class Trainer:
+
+    def __init__(
+        self,
+        env,
+        net,
+        mcts,
+        device="cpu",
+        config={},
+        net_config=None,
+        env_args={},
+        eval_env_args=None,
+    ):
         self.env = env
         self.net = net
         self.mcts = mcts
@@ -219,14 +281,22 @@ class Trainer():
         self.net_config = net_config
         self._set_config(config)
         self._seed = 1234
+        self.env_args = env_args
+        self.eval_env_args = eval_env_args if eval_env_args is not None else env_args
 
     def _set_config(self, config):
         self.SGD_steps_per_iteration = config.get("SGD_steps_per_iteration", 32)
-        self.self_play_episodes_per_iteration = config.get("self_play_episodes_per_iteration", 4)
+        self.self_play_episodes_per_iteration = config.get(
+            "self_play_episodes_per_iteration", 4
+        )
         self.replay_capacity_episodes = config.get("replay_capacity_episodes", 5000)
-        self.min_replay_episodes_for_training = config.get("min_replay_episodes_for_training", 10)
+        self.min_replay_episodes_for_training = config.get(
+            "min_replay_episodes_for_training", 10
+        )
         self.mcts_num_simulations = config.get("mcts_num_simulations", 50)
-        self.mcts_config_self_play = config.get("mcts_config_self_play", {"puct_opt": "muzero", "c_puct": 1.0})
+        self.mcts_config_self_play = config.get(
+            "mcts_config_self_play", {"puct_opt": "muzero", "c_puct": 1.0}
+        )
         self.batch_size = config.get("batch_size", 64)
         self.K = config.get("K", 5)
         self.n_step = config.get("n_step", 5)
@@ -239,9 +309,13 @@ class Trainer():
         self.weight_decay = config.get("weight_decay", 1e-5)
         self.num_workers = config.get("num_workers", 1)
 
-        self.temperature_scheduler_function = config.get("temperature_function", lambda it: 1.0)
+        self.temperature_scheduler_function = config.get(
+            "temperature_function", lambda it: 1.0
+        )
         self.c_puct_scheduler_function = config.get("c_puct_function", lambda it: 1.0)
-        self.dirichlet_eps_scheduler_function = config.get("dirichlet_eps_function", lambda it: 0.25)
+        self.dirichlet_eps_scheduler_function = config.get(
+            "dirichlet_eps_function", lambda it: 0.25
+        )
 
         self.eval_frequency = config.get("eval_frequency", 10)
         self.checkpoint_frquency = config.get("checkpoint_frequency", 20)
@@ -252,18 +326,27 @@ class Trainer():
         self.lr_scheduler = config.get("lr_scheduler", None)
         self.lr_scheduler_params = config.get("lr_scheduler_params", {})
 
-
     def run_self_play_executor(self, replay, it):
         net_state = {k: v.cpu() for k, v in self.net.state_dict().items()}
-        env_id = self.env.spec.id
 
         avg_length = 0
         avg_reward = 0
 
-        self.mcts_config_self_play["dirichlet_eps"] = self.dirichlet_eps_scheduler_function(it)
+        self.mcts_config_self_play["dirichlet_eps"] = (
+            self.dirichlet_eps_scheduler_function(it)
+        )
         self.mcts_config_self_play["c_puct"] = self.c_puct_scheduler_function(it)
         tasks = [
-            (env_id, self.net_config, net_state, self.temperature_scheduler_function(it), self.mcts_num_simulations, self.mcts_config_self_play, self._seed + i)
+            (
+                self.env,
+                self.env_args,
+                self.net_config,
+                net_state,
+                self.temperature_scheduler_function(it),
+                self.mcts_num_simulations,
+                self.mcts_config_self_play,
+                self._seed + i,
+            )
             for i in range(self.self_play_episodes_per_iteration)
         ]
         self._seed += self.self_play_episodes_per_iteration
@@ -277,7 +360,7 @@ class Trainer():
 
         avg_length /= self.self_play_episodes_per_iteration
         avg_reward /= self.self_play_episodes_per_iteration
-        
+
         return (avg_length, avg_reward)
 
     @staticmethod
@@ -292,14 +375,13 @@ class Trainer():
                 clean_dict[key] = value
         return clean_dict
 
-
     def _start_log(self):
         os.makedirs(self.log_path, exist_ok=True)
         n_logs = glob.glob(str(self.log_path / "training_log_*.jsonl"))
         log_idx = len(n_logs)
         self.log_name = self.log_path / f"training_log_{log_idx}.jsonl"
         log_dict = {"time_start": time.time(), "net_config": self.net_config}
-        
+
         log_dict_clean = self._clean_config_dict(log_dict)
 
         with open(self.log_name, "w") as f:
@@ -312,16 +394,19 @@ class Trainer():
         with open(self.log_name, "a") as f:
             f.write(json.dumps(out_log) + "\n")
 
-
     def train(self):
 
         output_log = []
         self._start_log()
 
         replay = ReplayBuffer(capacity_episodes=self.replay_capacity_episodes)
-        optimizer = torch.optim.Adam(self.net.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        optimizer = torch.optim.Adam(
+            self.net.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
+        )
         if self.lr_scheduler is not None:
-            assert hasattr(torch.optim.lr_scheduler, self.lr_scheduler), f"Unknown lr_scheduler {self.lr_scheduler}"
+            assert hasattr(
+                torch.optim.lr_scheduler, self.lr_scheduler
+            ), f"Unknown lr_scheduler {self.lr_scheduler}"
             scheduler_class = getattr(torch.optim.lr_scheduler, self.lr_scheduler)
             scheduler = scheduler_class(optimizer, **self.lr_scheduler_params)
 
@@ -334,8 +419,20 @@ class Trainer():
             else:
                 avg_length = 0
                 avg_reward = 0
+                net_state = {k: v.cpu() for k, v in self.net.state_dict().items()}
                 for i in range(self.self_play_episodes_per_iteration):
-                    ep = self_play_episode(self.env, self.net, self.mcts, temperature=self.temperature_scheduler_function(it), device=self.device, mcts_num_simulations=self.mcts_num_simulations, seed=self._seed + i)
+                    ep = _worker_self_play(
+                        (
+                            self.env,
+                            self.env_args,
+                            self.net_config,
+                            net_state,
+                            self.temperature_scheduler_function(it),
+                            self.mcts_num_simulations,
+                            self.mcts_config_self_play,
+                            self._seed + i,
+                        )
+                    )
                     replay.add_episode(ep)
                     avg_length += len(ep["rewards"])
                     avg_reward += sum(ep["rewards"])
@@ -353,7 +450,15 @@ class Trainer():
             self.net.train()
             for _ in range(self.SGD_steps_per_iteration):
                 batch = replay.sample_positions(batch_size=self.batch_size)
-                stats = train_step(self.net, optimizer, batch, K=self.K, n_step=self.n_step, gamma=self.gamma, device=self.device)
+                stats = train_step(
+                    self.net,
+                    optimizer,
+                    batch,
+                    K=self.K,
+                    n_step=self.n_step,
+                    gamma=self.gamma,
+                    device=self.device,
+                )
 
             if self.lr_scheduler is not None:
                 scheduler.step()
@@ -365,17 +470,31 @@ class Trainer():
             stats["avg_self_play_reward"] = avg_reward
             stats["replay_size_episodes"] = len(replay.episodes)
             stats["replay_size_transitions"] = len(replay)
-            stats["lr"] = optimizer.param_groups[0]['lr']
+            stats["lr"] = optimizer.param_groups[0]["lr"]
 
             if it % self.eval_frequency == 0:
                 eval_r = 0
                 eval_len = 0
-                for _ in range(4):
-                    ep = self_play_episode(self.env, self.net, self.mcts, temperature=0.0, device=self.device, mcts_num_simulations=self.mcts_num_simulations)
+                net_state = {k: v.cpu() for k, v in self.net.state_dict().items()}
+                for i in range(4):
+                    ep = _worker_self_play(
+                        (
+                            self.env,
+                            self.eval_env_args,
+                            self.net_config,
+                            net_state,
+                            self.temperature_scheduler_function(it),
+                            self.mcts_num_simulations,
+                            self.mcts_config_self_play,
+                            self._seed + i,
+                        )
+                    )
                     total_reward = sum(ep["rewards"])
                     eval_r += total_reward
                     eval_len += len(ep["rewards"])
-                print(f"Eval over 4 episodes: avg reward={eval_r/4}, avg length={eval_len/4}")
+                print(
+                    f"Eval over 4 episodes: avg reward={eval_r/4}, avg length={eval_len/4}"
+                )
                 stats["eval_avg_reward"] = eval_r / 4
                 stats["eval_avg_length"] = eval_len / 4
             else:
@@ -389,8 +508,20 @@ class Trainer():
 
             if it % self.checkpoint_frquency == 0:
                 if self.checkpoint_path is None:
-                    save_checkpoint(f"checkpoint_it{it}.pt", self.net, optimizer, self.net.config, it)
+                    save_checkpoint(
+                        f"checkpoint_it{it}.pt",
+                        self.net,
+                        optimizer,
+                        self.net.config,
+                        it,
+                    )
                 else:
-                    save_checkpoint(self.checkpoint_path / f"checkpoint_it{it}.pt", self.net, optimizer, self.net.config, it)
+                    save_checkpoint(
+                        self.checkpoint_path / f"checkpoint_it{it}.pt",
+                        self.net,
+                        optimizer,
+                        self.net.config,
+                        it,
+                    )
 
         return output_log

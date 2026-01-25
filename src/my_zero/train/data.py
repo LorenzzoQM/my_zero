@@ -4,11 +4,21 @@ import random
 from collections import deque
 import numpy as np
 
-def self_play_episode(env, net, mcts, temperature: float, device="cpu", max_steps=10_000, mcts_num_simulations=50, seed=None) -> dict:
+
+def self_play_episode(
+    env,
+    net,
+    mcts,
+    temperature: float,
+    device="cpu",
+    max_steps=10_000,
+    mcts_num_simulations=50,
+    seed=None,
+) -> dict:
     """
     net should expose:
       net.h(obs_tensor)-> latent
-      net.f(latent_batch)-> (policy_logits, value)  
+      net.f(latent_batch)-> (policy_logits, value)
       net.g(latent_batch, action_batch)-> (latent_next, r_pred)
     mcts.run(root_latent, legal_mask, num_simulations) -> visit_counts, root_value, root_value_raw
     """
@@ -18,9 +28,9 @@ def self_play_episode(env, net, mcts, temperature: float, device="cpu", max_step
     episode = {
         "obs": [],
         "actions": [],
-        "rewards": [],       # rewards after action
+        "rewards": [],  # rewards after action
         "dones": [],
-        "pis": [],           # visit dist per step (policy targets)
+        "pis": [],  # visit dist per step (policy targets)
         "legal_masks": [],
         "root_v_est": [],
     }
@@ -33,7 +43,11 @@ def self_play_episode(env, net, mcts, temperature: float, device="cpu", max_step
         # legal_mask = None
 
         # Encode observation -> latent
-        obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0).to(device)  # (1, obs_dim)
+        obs_t = (
+            torch.as_tensor(obs, dtype=torch.float32, device=device)
+            .unsqueeze(0)
+            .to(device)
+        )  # (1, obs_dim)
         with torch.no_grad():
             root_latent = net.h(obs_t).squeeze(0)  # (latent_dim,)
 
@@ -45,7 +59,9 @@ def self_play_episode(env, net, mcts, temperature: float, device="cpu", max_step
                 add_root_noise=True,
             )
 
-        action, pi_target = mcts.select_action_from_visits(visit_counts, temperature=temperature, return_pi=True)
+        action, pi_target = mcts.select_action_from_visits(
+            visit_counts, temperature=temperature, return_pi=True
+        )
 
         # Step env
         next_obs, reward, terminated, truncated, _ = env.step(action)

@@ -9,13 +9,17 @@ import torch
 @dataclass
 class Node:
     prior: float
-    reward: float = 0.0                 # reward from parent -> this node
+    reward: float = 0.0  # reward from parent -> this node
     visit_count: int = 0
     value_sum: float = 0.0
     children: Dict[int, "Node"] = field(default_factory=dict)
     latent: Optional[torch.Tensor] = None  # (latent_dim,) tensor for this node
-    action_values: Dict[int, float] = field(default_factory=dict)  # Q values for each action
-    action_counts: Dict[int, int] = field(default_factory=dict)  # N values for each action
+    action_values: Dict[int, float] = field(
+        default_factory=dict
+    )  # Q values for each action
+    action_counts: Dict[int, int] = field(
+        default_factory=dict
+    )  # N values for each action
 
     def expanded(self) -> bool:
         return len(self.children) > 0
@@ -25,11 +29,29 @@ class Node:
             return 0.0
         return self.value_sum / self.visit_count
 
+
 def puct_score(parent: Node, child: Node, c_puct: float) -> float:
-    pb_c = c_puct * child.prior * math.sqrt(parent.visit_count + 1e-8) / (1 + child.visit_count)
+    pb_c = (
+        c_puct
+        * child.prior
+        * math.sqrt(parent.visit_count + 1e-8)
+        / (1 + child.visit_count)
+    )
     return child.value() + pb_c
 
-def puct_mu_zero(parent: Node, child: Node, Q_sa: float, P_sa: float, N_s: float, N_sa: float, Q_min: float, Q_max: float, c1: float = 1.25, c2: float = 19652) -> float:
+
+def puct_mu_zero(
+    parent: Node,
+    child: Node,
+    Q_sa: float,
+    P_sa: float,
+    N_s: float,
+    N_sa: float,
+    Q_min: float,
+    Q_max: float,
+    c1: float = 1.25,
+    c2: float = 19652,
+) -> float:
 
     if np.isfinite(Q_max) and np.isfinite(Q_min) and Q_max > Q_min:
         Q_sa = (Q_sa - Q_min) / (Q_max - Q_min + 1e-8)
@@ -37,22 +59,22 @@ def puct_mu_zero(parent: Node, child: Node, Q_sa: float, P_sa: float, N_s: float
         Q_sa = 0.0
 
     # print(Q_sa)
-    val = Q_sa + P_sa*(np.sqrt(N_s)/(1 + N_sa)) * (c1 + np.log((N_s + c2 + 1)/c2))
+    val = Q_sa + P_sa * (np.sqrt(N_s) / (1 + N_sa)) * (c1 + np.log((N_s + c2 + 1) / c2))
     return val
+
 
 class MuZeroMCTS:
     def __init__(
         self,
-        prediction_net,   # f
-        dynamics_net,     # g
+        prediction_net,  # f
+        dynamics_net,  # g
         num_actions: int,
         discount: float = 0.997,
         c_puct: float = 1.5,
         dirichlet_alpha: float = 0.3,
         dirichlet_eps: float = 0.25,
         device: str = "cpu",
-        puct_opt: str = "puct"
-
+        puct_opt: str = "puct",
     ):
         self.f = prediction_net
         self.g = dynamics_net
@@ -67,11 +89,10 @@ class MuZeroMCTS:
         self.q_min = np.inf
         self.q_max = -np.inf
 
-
     @torch.no_grad()
     def run(
         self,
-        root_latent: torch.Tensor,          # (latent_dim,)
+        root_latent: torch.Tensor,  # (latent_dim,)
         legal_actions: Optional[np.ndarray] = None,  # bool mask shape (num_actions,)
         num_simulations: int = 50,
         add_root_noise: bool = True,
@@ -82,7 +103,9 @@ class MuZeroMCTS:
         # Expand root once to initialize priors and root value
         self.q_min = np.inf
         self.q_max = -np.inf
-        root_value = self._expand(root, legal_actions=legal_actions, add_noise=add_root_noise)
+        root_value = self._expand(
+            root, legal_actions=legal_actions, add_noise=add_root_noise
+        )
 
         for _ in range(num_simulations):
             node = root
@@ -93,15 +116,16 @@ class MuZeroMCTS:
             while node.expanded():
                 parent = node
                 action, node = self._select_child(search_path[-1])
-                
+
                 # Lazily materialize child latent via dynamics the first time we traverse it
                 if node.latent is None:
                     s_parent = parent.latent.unsqueeze(0)  # (1, latent_dim)
                     a_t = torch.tensor([action], device=self.device, dtype=torch.long)
-                    s_next, r_pred = self.g(s_parent, a_t)  # s_next: (1, latent_dim), r_pred: (1,)
+                    s_next, r_pred = self.g(
+                        s_parent, a_t
+                    )  # s_next: (1, latent_dim), r_pred: (1,)
                     node.latent = s_next.squeeze(0).detach()
                     node.reward = float(r_pred.squeeze().item())
-                
 
                 search_path.append(node)
                 actions_taken.append(action)
@@ -126,8 +150,17 @@ class MuZeroMCTS:
             if self.puct_opt == "puct":
                 score = puct_score(parent, child, self.c_puct)
             else:
-                score = puct_mu_zero(parent, child, parent.action_values.get(action, 0.0), child.prior, parent.visit_count, parent.action_counts.get(action, 0), self.q_min, self.q_max)
-                
+                score = puct_mu_zero(
+                    parent,
+                    child,
+                    parent.action_values.get(action, 0.0),
+                    child.prior,
+                    parent.visit_count,
+                    parent.action_counts.get(action, 0),
+                    self.q_min,
+                    self.q_max,
+                )
+
             if score > best_score:
                 best_score = score
                 best_action, best_child = action, child
@@ -142,7 +175,9 @@ class MuZeroMCTS:
         assert node.latent is not None, "Node latent must be set before expansion."
 
         s = node.latent.unsqueeze(0)  # (1, latent_dim)
-        policy_logits, value = self.f(s.to(self.device))  # logits: (1, A), value: (1,) or (1,)
+        policy_logits, value = self.f(
+            s.to(self.device)
+        )  # logits: (1, A), value: (1,) or (1,)
 
         logits = policy_logits.squeeze(0).float().cpu().numpy()  # (A,)
         value = float(value.squeeze().item())
@@ -189,9 +224,11 @@ class MuZeroMCTS:
                 break  # reached root
 
             parent = search_path[i - 1]
-            action = actions_taken[i - 1]          # action taken at parent to reach node
+            action = actions_taken[i - 1]  # action taken at parent to reach node
 
-            q = node.reward + self.discount * v    # reward is stored on child node (edge parent->child)
+            q = (
+                node.reward + self.discount * v
+            )  # reward is stored on child node (edge parent->child)
 
             # # Update edge stats on the parent
             if action not in parent.action_values:
@@ -208,15 +245,16 @@ class MuZeroMCTS:
 
             v = q
 
-
     @staticmethod
     def _softmax(x: np.ndarray) -> np.ndarray:
         x = x - np.max(x)
         e = np.exp(x)
         return e / (np.sum(e) + 1e-8)
-    
+
     @staticmethod
-    def select_action_from_visits(visit_counts: np.ndarray, temperature: float, return_pi: bool) -> Union[int, tuple[int, np.ndarray]]:
+    def select_action_from_visits(
+        visit_counts: np.ndarray, temperature: float, return_pi: bool
+    ) -> Union[int, tuple[int, np.ndarray]]:
         if temperature <= 1e-8:
             action = int(np.argmax(visit_counts))
             pi_target = np.zeros_like(visit_counts, dtype=np.float32)
