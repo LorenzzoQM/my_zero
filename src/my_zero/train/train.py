@@ -1,4 +1,4 @@
-from my_zero.train.data import self_play_episode, ReplayBuffer
+from my_zero.train.data import self_play_episode, ReplayBuffer, PrioritizedReplayBuffer
 from my_zero.models.networks import scalar_to_support, scale_value, MuZeroNet
 from my_zero.MCTS.tree_search import MuZeroMCTS
 from my_zero.train.workers import _init_self_play_worker, _worker_self_play_one_episode
@@ -140,6 +140,8 @@ def train_step(
     w_policy=1.0,
     w_value=1.0,
     w_reward=1.0,
+    is_weights=None,
+    return_priorities=False,
 ):
     """
     batch: list of (episode, t0)
@@ -153,6 +155,11 @@ def train_step(
         target_vs_list,
         legal_masks_list,
     ) = ([], [], [], [], [], [])
+
+    if is_weights is None:
+        w = None
+    else:
+        w = torch.as_tensor(is_weights, dtype=torch.float32, device=device)  # (B,)
 
     for ep, t0 in batch:
         obs0_list.append(ep["obs"][t0])
@@ -213,15 +220,13 @@ def train_step(
         logits, v_pred = net.f(s, return_logits=return_logits_v)
         # Policy loss: cross-entropy with target visit distribution
         logp = F.log_softmax(logits, dim=-1)
-        policy_loss = -(target_pis[:, k, :] * logp).sum(dim=-1).mean()
+        policy_loss = -(target_pis[:, k, :] * logp).sum(dim=-1)
 
         # Value loss: MSE
         # value_loss = F.mse_loss(v_pred, target_vs[:, k])
         if return_logits_v:
             target_dist = scalar_to_support(scale_value(target_vs[:, k]), net.f.support)
-            value_loss = (
-                -(target_dist * F.log_softmax(v_pred, dim=-1)).sum(dim=-1).mean()
-            )
+            value_loss = -(target_dist * F.log_softmax(v_pred, dim=-1)).sum(dim=-1)
         else:
             value_loss = F.mse_loss(v_pred, target_vs[:, k])
 
@@ -236,31 +241,44 @@ def train_step(
                 target_dist_r = scalar_to_support(
                     scale_value(target_rs[:, k]), net.g.support
                 )
-                reward_loss = (
-                    -(target_dist_r * F.log_softmax(r_pred, dim=-1)).sum(dim=-1).mean()
+                reward_loss = -(target_dist_r * F.log_softmax(r_pred, dim=-1)).sum(
+                    dim=-1
                 )
             else:
                 reward_loss = F.mse_loss(r_pred, target_rs[:, k])
             total_reward_loss = total_reward_loss + reward_loss / K
             s = s_next
 
-    loss = (
+    loss_unweighted = (
         w_policy * total_policy_loss
         + w_value * total_value_loss
         + w_reward * total_reward_loss
     )
+
+    if w is None:
+        loss = loss_unweighted.mean()
+    else:
+        loss = (loss_unweighted * w).mean()
 
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
     optimizer.step()
 
-    return {
+    stats = {
         "loss": float(loss.item()),
-        "policy_loss": float(total_policy_loss.item()),
-        "value_loss": float(total_value_loss.item()),
-        "reward_loss": float(total_reward_loss.item()),
+        "loss_unweighted": float(loss_unweighted.mean().detach().cpu().item()),
+        "policy_loss": float(total_policy_loss.mean().detach().cpu().item()),
+        "value_loss": float(total_value_loss.mean().detach().cpu().item()),
+        "reward_loss": float(total_reward_loss.mean().detach().cpu().item()),
     }
+
+    if return_priorities:
+        # A good priority signal: per-sample total loss, or just value error / value CE
+        priorities = loss_unweighted.detach().abs().cpu().numpy()  # (B,)
+        stats["priorities"] = priorities
+
+    return stats
 
 
 class Trainer:
@@ -330,6 +348,10 @@ class Trainer:
 
         self.net_class = config.get("net_class", MuZeroNet)
         self.mcts_class = config.get("mcts_class", MuZeroMCTS)
+
+        self.prioritized_replay = config.get("prioritized_replay", False)
+        self.per_beta0 = config.get("per_beta0", 0.4)
+        self.per_beta1 = config.get("per_beta1", 1.0)
 
     def _get_self_play_pool(self):
         if getattr(self, "_self_play_pool", None) is None:
@@ -424,7 +446,13 @@ class Trainer:
         output_log = []
         self._start_log()
 
-        replay = ReplayBuffer(capacity_episodes=self.replay_capacity_episodes)
+        if self.prioritized_replay:
+            replay = PrioritizedReplayBuffer(
+                capacity_episodes=self.replay_capacity_episodes
+            )
+        else:
+            replay = ReplayBuffer(capacity_episodes=self.replay_capacity_episodes)
+
         optimizer = torch.optim.Adam(
             self.net.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
         )
@@ -473,9 +501,26 @@ class Trainer:
 
             # Train (a few SGD steps)
             self.net.train()
+            stats = {}
+            stats_list = []
             for _ in range(self.SGD_steps_per_iteration):
-                batch = replay.sample_positions(batch_size=self.batch_size)
-                stats = train_step(
+                # batch = replay.sample_positions(batch_size=self.batch_size)
+
+                if self.prioritized_replay:
+                    beta = self.per_beta0 + (self.per_beta1 - self.per_beta0) * (
+                        it / max(1, self.n_iterations - 1)
+                    )
+
+                    batch, is_w, ep_indices = replay.sample_positions(
+                        batch_size=self.batch_size, beta=beta
+                    )
+                    return_priorities = True
+                else:
+                    batch = replay.sample_positions(batch_size=self.batch_size)
+                    is_w = None
+                    return_priorities = False
+
+                stats_step = train_step(
                     self.net,
                     optimizer,
                     batch,
@@ -483,7 +528,22 @@ class Trainer:
                     n_step=self.n_step,
                     gamma=self.gamma,
                     device=self.device,
+                    is_weights=is_w,
+                    return_priorities=return_priorities,
                 )
+
+                if self.prioritized_replay:
+                    replay.update_priorities(ep_indices, stats_step.pop("priorities"))
+                    stats_step["replay_buffer_beta"] = beta
+
+                stats_list.append(stats_step)
+
+            for k, v in stats.items():
+                stats[k] = np.mean([s[k] for s in stats_list])
+                stats[f"{k}_std"] = np.std([s[k] for s in stats_list])
+                stats[f"{k}_min"] = np.min([s[k] for s in stats_list])
+                stats[f"{k}_max"] = np.max([s[k] for s in stats_list])
+                stats[f"{k}_median"] = np.median([s[k] for s in stats_list])
 
             if self.lr_scheduler is not None:
                 scheduler.step()
