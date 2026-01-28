@@ -3,11 +3,11 @@ import torch.nn as nn
 from typing import Union
 
 
-def scale_value(x, eps=0.001):
+def scale_value_function(x, eps=0.001):
     return torch.sign(x) * (torch.sqrt(torch.abs(x) + 1.0) - 1.0) + eps * x
 
 
-def inverse_scale_value(y, eps=0.001):
+def inverse_scale_value_function(y, eps=0.001):
     sign = torch.sign(y)
     abs_y = torch.abs(y)
     return sign * (
@@ -127,6 +127,7 @@ class DynamicsMLP(nn.Module):
         normalize_latent: str | None = "l2",
         output_probabilities: bool = False,
         support: torch.Tensor = None,
+        scale_value: bool = False,
     ):
 
         super().__init__()
@@ -141,6 +142,10 @@ class DynamicsMLP(nn.Module):
         self.action_embed = nn.Embedding(num_actions, action_embed_dim)
         self.output_probabilities = output_probabilities
         self.support = support
+        self.scale_value = (lambda x: x) if not scale_value else scale_value_function
+        self.inverse_scale_value = (
+            (lambda y: y) if not scale_value else inverse_scale_value_function
+        )
 
         if self.output_probabilities and self.support is None:
             raise ValueError("support must be provided if output_probabilities is True")
@@ -163,7 +168,7 @@ class DynamicsMLP(nn.Module):
             return next_state, reward_logits.squeeze(-1)
         else:
             probs = nn.functional.softmax(reward_logits, dim=-1)
-            return next_state, inverse_scale_value(
+            return next_state, self.inverse_scale_value(
                 support_to_scalar(probs, self.support)
             )
 
@@ -176,6 +181,7 @@ class PredictorMLP(nn.Module):
         num_actions: int,
         output_probabilities: bool = False,
         support: torch.Tensor = None,
+        scale_value: bool = False,
     ):
 
         super().__init__()
@@ -187,6 +193,10 @@ class PredictorMLP(nn.Module):
         )
         self.output_probabilities = output_probabilities
         self.support = support
+        self.scale_value = (lambda x: x) if not scale_value else scale_value_function
+        self.inverse_scale_value = (
+            (lambda y: y) if not scale_value else inverse_scale_value_function
+        )
 
         if self.output_probabilities and self.support is None:
             raise ValueError("support must be provided if output_probabilities is True")
@@ -205,7 +215,9 @@ class PredictorMLP(nn.Module):
             return logits, value_logits.squeeze(-1)
         else:
             probs = nn.functional.softmax(value_logits, dim=-1)
-            return logits, inverse_scale_value(support_to_scalar(probs, self.support))
+            return logits, self.inverse_scale_value(
+                support_to_scalar(probs, self.support)
+            )
 
 
 class MuZeroNet(nn.Module):

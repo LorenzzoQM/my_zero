@@ -1,5 +1,5 @@
 from my_zero.train.data import self_play_episode, ReplayBuffer, PrioritizedReplayBuffer
-from my_zero.models.networks import scalar_to_support, scale_value, MuZeroNet
+from my_zero.models.networks import scalar_to_support, MuZeroNet
 from my_zero.MCTS.tree_search import MuZeroMCTS
 from my_zero.train.workers import _init_self_play_worker, _worker_self_play_one_episode
 import numpy as np
@@ -222,7 +222,9 @@ def train_step(
         # Value loss: MSE
         # value_loss = F.mse_loss(v_pred, target_vs[:, k])
         if return_logits_v:
-            target_dist = scalar_to_support(scale_value(target_vs[:, k]), net.f.support)
+            target_dist = scalar_to_support(
+                net.f.scale_value(target_vs[:, k]), net.f.support
+            )
             value_loss = -(target_dist * F.log_softmax(v_pred, dim=-1)).sum(dim=-1)
         else:
             value_loss = F.mse_loss(v_pred, target_vs[:, k])
@@ -236,7 +238,7 @@ def train_step(
             # reward_loss = F.mse_loss(r_pred, target_rs[:, k])
             if return_logits_r:
                 target_dist_r = scalar_to_support(
-                    scale_value(target_rs[:, k]), net.g.support
+                    net.g.scale_value(target_rs[:, k]), net.g.support
                 )
                 reward_loss = -(target_dist_r * F.log_softmax(r_pred, dim=-1)).sum(
                     dim=-1
