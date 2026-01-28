@@ -538,11 +538,11 @@ class Trainer:
                 stats_list.append(stats_step)
 
             for k in stats_step.keys():
-                stats[k] = np.mean([s[k] for s in stats_list])
-                stats[f"{k}_std"] = np.std([s[k] for s in stats_list])
-                stats[f"{k}_min"] = np.min([s[k] for s in stats_list])
-                stats[f"{k}_max"] = np.max([s[k] for s in stats_list])
-                stats[f"{k}_median"] = np.median([s[k] for s in stats_list])
+                stats[k] = np.mean([s[k] for s in stats_list]).item()
+                stats[f"{k}_std"] = np.std([s[k] for s in stats_list]).item()
+                stats[f"{k}_min"] = np.min([s[k] for s in stats_list]).item()
+                stats[f"{k}_max"] = np.max([s[k] for s in stats_list]).item()
+                stats[f"{k}_median"] = np.median([s[k] for s in stats_list]).item()
 
             if self.lr_scheduler is not None:
                 scheduler.step()
