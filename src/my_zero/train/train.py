@@ -113,11 +113,8 @@ def make_targets(ep: dict, t0: int, K: int, n_step: int, gamma: float):
                 if ep["dones"][ti]:
                     break
                 if i == n_step - 1:
-                    # v += (gamma ** (i + 1)) * ep["root_v_est"][ti]
-                    for j in range(ti, T):
-                        v += (gamma ** (i + 1 + j - ti)) * ep["rewards"][j]
-                        if ep["dones"][j]:
-                            break
+                    if ti + 1 < T:
+                        v += (gamma ** (i + 1)) * ep["root_v_est"][ti + 1]
                     break
 
         target_vs.append(v)
