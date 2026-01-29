@@ -88,7 +88,6 @@ def _worker_self_play(args):
 
 def make_targets(ep: dict, t0: int, K: int, n_step: int, gamma: float):
     T = len(ep["actions"])
-    T_v = len(ep["root_v_est"])
 
     target_pis = []
     target_rs = []
