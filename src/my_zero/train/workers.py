@@ -1,6 +1,9 @@
+import os
 import torch
 import gymnasium as gym
 from my_zero.train.data import self_play_episode
+import logging
+import logging.handlers
 
 _WORKER_ENV = None
 _WORKER_NET = None
@@ -9,7 +12,7 @@ _MCTS_CLASS = None
 
 
 def _init_self_play_worker(
-    env_cls, env_args, net_cls, mcts_class, net_config, device_str="cpu"
+    q, env_cls, env_args, net_cls, mcts_class, net_config, device_str="cpu"
 ):
     """Runs once per worker process."""
     global _WORKER_ENV, _WORKER_NET, _WORKER_DEVICE, _MCTS_CLASS
@@ -27,7 +30,14 @@ def _init_self_play_worker(
 
     # Compile once per worker
     _WORKER_NET = torch.compile(_WORKER_NET)
-    print("WORKER NET TYPE:", type(_WORKER_NET))
+    logger = logging.getLogger("my_zero")
+    logger.setLevel(logging.DEBUG)
+    if not logger.handlers:
+        qh = logging.handlers.QueueHandler(q)
+        logger.addHandler(qh)
+    logger.debug(
+        f"Initialized worker pid {os.getpid()} on device {_WORKER_DEVICE} with net type {type(_WORKER_NET)}"
+    )
 
     _MCTS_CLASS = mcts_class
 

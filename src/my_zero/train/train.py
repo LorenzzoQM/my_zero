@@ -1,7 +1,9 @@
+import sys
 from my_zero.train.data import self_play_episode, ReplayBuffer, PrioritizedReplayBuffer
 from my_zero.models.networks import scalar_to_support, MuZeroNet
 from my_zero.MCTS.tree_search import MuZeroMCTS
 from my_zero.train.workers import _init_self_play_worker, _worker_self_play_one_episode
+from my_zero.utils.logger_config import SimFormatter
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -12,6 +14,10 @@ import pathlib
 import glob
 import os
 import json
+import logging
+import multiprocessing as mp
+
+logger = logging.getLogger(__name__)
 
 
 def save_checkpoint(path, net, optimizer, config, iteration):
@@ -301,7 +307,9 @@ class Trainer:
         self.env_args = env_args
         self.eval_env_args = eval_env_args if eval_env_args is not None else env_args
 
+        self._setup_logger()
         self.net = torch.compile(self.net).to(self.device)
+        logger.info(f"Using device: {self.device}")
 
     def _set_config(self, config):
         self.SGD_steps_per_iteration = config.get("SGD_steps_per_iteration", 32)
@@ -352,12 +360,26 @@ class Trainer:
         self.per_beta0 = config.get("per_beta0", 0.4)
         self.per_beta1 = config.get("per_beta1", 1.0)
 
+        self.logger_level = config.get("logger_level", logging.DEBUG)
+
+    def _setup_logger(self):
+        logger = logging.getLogger("my_zero")
+        logger.setLevel(self.logger_level)
+        ch = logging.StreamHandler()
+        ch.setFormatter(SimFormatter())
+        logger.addHandler(ch)
+        q = mp.Queue()
+        self.logger_queue = q
+        listener = logging.handlers.QueueListener(self.logger_queue, ch)
+        listener.start()
+
     def _get_self_play_pool(self):
         if getattr(self, "_self_play_pool", None) is None:
             self._self_play_pool = ProcessPoolExecutor(
                 max_workers=self.num_workers,
                 initializer=_init_self_play_worker,
                 initargs=(
+                    self.logger_queue,
                     self.env,
                     self.env_args,
                     self.net_class,
@@ -366,6 +388,7 @@ class Trainer:
                     self.device,
                 ),
             )
+            logger.info("Using %d workers for self-play", self.num_workers)
         return self._self_play_pool
 
     def run_self_play_executor(self, replay, it):
@@ -449,6 +472,7 @@ class Trainer:
             replay = PrioritizedReplayBuffer(
                 capacity_episodes=self.replay_capacity_episodes
             )
+            logger.info("Using Prioritized Experience Replay")
         else:
             replay = ReplayBuffer(capacity_episodes=self.replay_capacity_episodes)
 
@@ -493,7 +517,14 @@ class Trainer:
                 avg_length /= self.self_play_episodes_per_iteration
                 avg_reward /= self.self_play_episodes_per_iteration
 
-            print(f"Iteration {it}: Replay buffer size: {len(replay)} transitions")
+            # logger.info(
+            #     f"Iteration {it}: Replay buffer size: {len(replay)} transitions"
+            # )
+            time_self_play = time.time()
+            logger.info(
+                f"Replay buffer size: {len(replay)} transitions. Self-play took",
+                extra={"iteration": it, "time": time_self_play - time_start},
+            )
 
             if len(replay.episodes) < self.min_replay_episodes_for_training:
                 continue
@@ -548,7 +579,10 @@ class Trainer:
                 scheduler.step()
 
             time_end = time.time()
-            print(f"Iteration {it} took {time_end - time_start:.2f} seconds")
+            logger.info(
+                "Training iteration took",
+                extra={"iteration": it, "time": time_end - time_self_play},
+            )
             stats["iteration_time"] = time_end - time_start
             stats["avg_self_play_length"] = avg_length
             stats["avg_self_play_reward"] = avg_reward
@@ -576,8 +610,9 @@ class Trainer:
                     total_reward = sum(ep["rewards"])
                     eval_r += total_reward
                     eval_len += len(ep["rewards"])
-                print(
-                    f"Eval over 4 episodes: avg reward={eval_r/4}, avg length={eval_len/4}"
+                logger.debug(
+                    f"Eval over 4 episodes: avg reward={eval_r/4}, avg length={eval_len/4}",
+                    extra={"iteration": it},
                 )
                 stats["eval_avg_reward"] = eval_r / 4
                 stats["eval_avg_length"] = eval_len / 4
@@ -586,11 +621,12 @@ class Trainer:
                 stats["eval_avg_length"] = None
 
             output_log.append((it, stats))
-            print(it, stats)
+            logger.debug(f"Stats: {stats}", extra={"iteration": it})
 
             self._save_log({"iteration": it, **stats})
 
             if it % self.checkpoint_frquency == 0:
+                logger.info("Saving checkpoint.", extra={"iteration": it})
                 if self.checkpoint_path is None:
                     save_checkpoint(
                         f"checkpoint_it{it}.pt",
