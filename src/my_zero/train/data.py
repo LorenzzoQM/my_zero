@@ -13,7 +13,8 @@ class Episode:
     obs: Union[np.ndarray, List[Any]]
     actions: Union[np.ndarray, List[Any]]
     rewards: Union[np.ndarray, List[Any]]
-    dones: Union[np.ndarray, List[Any]]
+    terminated: Union[np.ndarray, List[Any]]
+    truncated: Union[np.ndarray, List[Any]]
     pis: Union[np.ndarray, List[Any]]
     root_v_est: Union[np.ndarray, List[Any]]
     legal_masks: Union[np.ndarray, List[Any]]
@@ -48,7 +49,8 @@ def self_play_episode(
         obs=[],
         actions=[],
         rewards=[],
-        dones=[],
+        terminated=[],
+        truncated=[],
         pis=[],
         legal_masks=[],
         root_v_est=[],
@@ -91,13 +93,31 @@ def self_play_episode(
         episode["obs"].append(obs)
         episode["actions"].append(action)
         episode["rewards"].append(float(reward))
-        episode["dones"].append(done)
+        episode["terminated"].append(terminated)
+        episode["truncated"].append(truncated)
         episode["pis"].append(pi_target)
         episode["legal_masks"].append(legal_mask.astype(np.float32))
         episode["root_v_est"].append(float(root_v_est))
 
         obs = next_obs
         t += 1
+
+        if truncated:
+            obs_t = (
+                torch.as_tensor(obs, dtype=torch.float32, device=device)
+                .unsqueeze(0)
+                .to(device)
+            )
+            with torch.no_grad():
+                root_latent = net.h(obs_t).squeeze(0)  # (latent_dim,)
+
+                _, root_v_est, _ = mcts.run(
+                    root_latent=root_latent,
+                    legal_actions=legal_mask,
+                    num_simulations=mcts_num_simulations,
+                    add_root_noise=True,
+                )
+            episode["root_v_est"].append(float(root_v_est))
 
     return episode
 

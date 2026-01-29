@@ -88,6 +88,7 @@ def _worker_self_play(args):
 
 def make_targets(ep: dict, t0: int, K: int, n_step: int, gamma: float):
     T = len(ep["actions"])
+    T_v = len(ep["root_v_est"])
 
     target_pis = []
     target_rs = []
@@ -116,11 +117,13 @@ def make_targets(ep: dict, t0: int, K: int, n_step: int, gamma: float):
             ti = t + i
             if ti < T:
                 v += (gamma**i) * ep["rewards"][ti]
-                if ep["dones"][ti]:
+                if ep["terminated"][ti]:
+                    break
+                if ep["truncated"][ti]:
+                    v += (gamma ** (i + 1)) * ep["root_v_est"][ti + 1]
                     break
                 if i == n_step - 1:
-                    if ti + 1 < T:
-                        v += (gamma ** (i + 1)) * ep["root_v_est"][ti + 1]
+                    v += (gamma ** (i + 1)) * ep["root_v_est"][ti + 1]
                     break
 
         target_vs.append(v)
