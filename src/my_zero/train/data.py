@@ -27,6 +27,7 @@ class Episode:
 
 def self_play_episode(
     env,
+    env_callback,
     net,
     mcts,
     temperature: float,
@@ -34,7 +35,7 @@ def self_play_episode(
     max_steps=10_000,
     mcts_num_simulations=50,
     seed=None,
-) -> Episode:
+) -> Tuple[Episode, Optional[Any]]:
     """
     net should expose:
       net.h(obs_tensor)-> latent
@@ -119,7 +120,12 @@ def self_play_episode(
                 )
             episode["root_v_est"].append(float(root_v_est))
 
-    return episode
+    if env_callback is not None:
+        env_callback_data = env_callback(env)
+    else:
+        env_callback_data = None
+
+    return episode, env_callback_data
 
 
 class ReplayBuffer:

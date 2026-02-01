@@ -50,6 +50,7 @@ def _worker_self_play(args):
     (
         env_id,
         env_args,
+        env_callback,
         net_config,
         net_state,
         temperature,
@@ -72,8 +73,9 @@ def _worker_self_play(args):
 
     mcts = MuZeroMCTS(net.f, net.g, num_actions=env.action_space.n, **mcts_config)
 
-    ep = self_play_episode(
+    ep, env_callback = self_play_episode(
         env=env,
+        env_callback=env_callback,
         net=net,
         mcts=mcts,
         temperature=temperature,
@@ -83,7 +85,7 @@ def _worker_self_play(args):
     )
 
     env.close()
-    return ep
+    return ep, env_callback
 
 
 def make_targets(ep: dict, t0: int, K: int, n_step: int, gamma: float):
@@ -365,6 +367,7 @@ class Trainer:
         self.logger_level = config.get("logger_level", logging.DEBUG)
 
         self.tensorboard_logging = config.get("tensorboard_logging", True)
+        self.env_callback = config.get("env_callback", None)
 
     def _setup_logger(self):
         logger = logging.getLogger("my_zero")
@@ -386,6 +389,7 @@ class Trainer:
                     self.logger_queue,
                     self.env,
                     self.env_args,
+                    self.env_callback,
                     self.net_class,
                     self.mcts_class,
                     self.net_config,
@@ -425,16 +429,17 @@ class Trainer:
 
         avg_length = 0.0
         avg_reward = 0.0
+        env_callback_data_list = []
         for fut in as_completed(futures):
-            ep = fut.result()
+            ep, env_callback_data = fut.result()
             replay.add_episode(ep)
             avg_length += len(ep["rewards"])
             avg_reward += sum(ep["rewards"])
-
+            env_callback_data_list.append(env_callback_data)
         avg_length /= self.self_play_episodes_per_iteration
         avg_reward /= self.self_play_episodes_per_iteration
 
-        return (avg_length, avg_reward)
+        return (avg_length, avg_reward, env_callback_data_list)
 
     @staticmethod
     def _clean_config_dict(config):
@@ -472,6 +477,27 @@ class Trainer:
         with open(self.log_name, "a") as f:
             f.write(json.dumps(out_log) + "\n")
 
+    @staticmethod
+    def _summarize_stats(env_callback_data_list):
+
+        stats_callbacks = {}
+        for data in env_callback_data_list:
+            if data is not None:
+                for key, value in data.items():
+                    if key not in stats_callbacks:
+                        stats_callbacks[key] = [value]
+                    else:
+                        stats_callbacks[key].append(value)
+
+        stats_callbacks_summary = {}
+        for key, values in stats_callbacks.items():
+            stats_callbacks_summary[f"{key}_mean"] = np.mean(values).item()
+            stats_callbacks_summary[f"{key}_std"] = np.std(values).item()
+            stats_callbacks_summary[f"{key}_min"] = np.min(values).item()
+            stats_callbacks_summary[f"{key}_max"] = np.max(values).item()
+        del stats_callbacks
+        return stats_callbacks_summary
+
     def train(self):
 
         output_log = []
@@ -500,13 +526,16 @@ class Trainer:
 
             self.net.eval()
             if self.num_workers > 1:
-                avg_length, avg_reward = self.run_self_play_executor(replay, it)
+                avg_length, avg_reward, env_callback_data_list = (
+                    self.run_self_play_executor(replay, it)
+                )
             else:
                 avg_length = 0
                 avg_reward = 0
+                env_callback_data_list = []
                 net_state = {k: v.cpu() for k, v in self.net.state_dict().items()}
                 for i in range(self.self_play_episodes_per_iteration):
-                    ep = _worker_self_play(
+                    ep, env_callback_data = _worker_self_play(
                         (
                             self.env,
                             self.env_args,
@@ -519,6 +548,7 @@ class Trainer:
                         )
                     )
                     replay.add_episode(ep)
+                    env_callback_data_list.extend(env_callback_data)
                     avg_length += len(ep["rewards"])
                     avg_reward += sum(ep["rewards"])
 
@@ -526,9 +556,8 @@ class Trainer:
                 avg_length /= self.self_play_episodes_per_iteration
                 avg_reward /= self.self_play_episodes_per_iteration
 
-            # logger.info(
-            #     f"Iteration {it}: Replay buffer size: {len(replay)} transitions"
-            # )
+            stats_callbacks = self._summarize_stats(env_callback_data_list)
+
             time_self_play = time.time()
             logger.info(
                 f"Replay buffer size: {len(replay)} transitions. Self-play took",
@@ -599,15 +628,18 @@ class Trainer:
             stats["replay_size_transitions"] = len(replay)
             stats["lr"] = optimizer.param_groups[0]["lr"]
 
+            stats_callbacks_eval = {}
             if it % self.eval_frequency == 0:
                 eval_r = 0
                 eval_len = 0
+                eval_callback_data_list = []
                 net_state = {k: v.cpu() for k, v in self.net.state_dict().items()}
                 for i in range(4):
-                    ep = _worker_self_play(
+                    ep, eval_callback_data = _worker_self_play(
                         (
                             self.env,
                             self.eval_env_args,
+                            self.env_callback,
                             self.net_config,
                             net_state,
                             self.temperature_scheduler_function(it),
@@ -617,6 +649,11 @@ class Trainer:
                         )
                     )
                     total_reward = sum(ep["rewards"])
+                    (
+                        eval_callback_data_list.append(eval_callback_data)
+                        if eval_callback_data is not None
+                        else []
+                    )
                     eval_r += total_reward
                     eval_len += len(ep["rewards"])
                 logger.debug(
@@ -625,6 +662,7 @@ class Trainer:
                 )
                 stats["eval_avg_reward"] = eval_r / 4
                 stats["eval_avg_length"] = eval_len / 4
+                stats_callbacks_eval = self._summarize_stats(eval_callback_data_list)
             else:
                 stats["eval_avg_reward"] = None
                 stats["eval_avg_length"] = None
@@ -638,6 +676,10 @@ class Trainer:
                 for key, value in stats.items():
                     if value is not None:
                         self.tb_writer.add_scalar(key, value, it)
+                for key, value in stats_callbacks.items():
+                    self.tb_writer.add_scalar(f"self_play/{key}", value, it)
+                for key, value in stats_callbacks_eval.items():
+                    self.tb_writer.add_scalar(f"eval/{key}", value, it)
 
             if it % self.checkpoint_frquency == 0:
                 logger.info("Saving checkpoint.", extra={"iteration": it})

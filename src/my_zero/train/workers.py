@@ -9,13 +9,21 @@ _WORKER_ENV = None
 _WORKER_NET = None
 _WORKER_DEVICE = None
 _MCTS_CLASS = None
+_ENV_CALLBACK = None
 
 
 def _init_self_play_worker(
-    q, env_cls, env_args, net_cls, mcts_class, net_config, device_str="cpu"
+    q,
+    env_cls,
+    env_args,
+    env_callback,
+    net_cls,
+    mcts_class,
+    net_config,
+    device_str="cpu",
 ):
     """Runs once per worker process."""
-    global _WORKER_ENV, _WORKER_NET, _WORKER_DEVICE, _MCTS_CLASS
+    global _WORKER_ENV, _WORKER_NET, _WORKER_DEVICE, _MCTS_CLASS, _ENV_CALLBACK
 
     _WORKER_DEVICE = torch.device(device_str)
 
@@ -40,6 +48,7 @@ def _init_self_play_worker(
     )
 
     _MCTS_CLASS = mcts_class
+    _ENV_CALLBACK = env_callback
 
 
 def _worker_self_play_one_episode(
@@ -50,7 +59,7 @@ def _worker_self_play_one_episode(
     mcts_config_self_play,
     seed,
 ):
-    global _WORKER_ENV, _WORKER_NET, _WORKER_DEVICE
+    global _WORKER_ENV, _WORKER_NET, _WORKER_DEVICE, _ENV_CALLBACK
 
     state = {
         k: v.to(_WORKER_DEVICE, non_blocking=True) for k, v in net_state_cpu.items()
@@ -66,8 +75,9 @@ def _worker_self_play_one_episode(
         **mcts_config_self_play,
     )
 
-    episode = self_play_episode(
+    episode, env_callback_data = self_play_episode(
         env=_WORKER_ENV,
+        env_callback=_ENV_CALLBACK,
         net=_WORKER_NET,
         mcts=mcts,
         temperature=temperature,
@@ -75,4 +85,4 @@ def _worker_self_play_one_episode(
         seed=seed,
         device=_WORKER_DEVICE,
     )
-    return episode
+    return episode, env_callback_data
