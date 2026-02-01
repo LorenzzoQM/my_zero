@@ -364,6 +364,8 @@ class Trainer:
 
         self.logger_level = config.get("logger_level", logging.DEBUG)
 
+        self.tensorboard_logging = config.get("tensorboard_logging", True)
+
     def _setup_logger(self):
         logger = logging.getLogger("my_zero")
         logger.setLevel(self.logger_level)
@@ -460,6 +462,11 @@ class Trainer:
 
         if self.checkpoint_path is not None:
             os.makedirs(self.checkpoint_path, exist_ok=True)
+
+        if self.tensorboard_logging:
+            from torch.utils.tensorboard import SummaryWriter
+
+            self.tb_writer = SummaryWriter(log_dir=self.log_path)
 
     def _save_log(self, out_log):
         with open(self.log_name, "a") as f:
@@ -626,6 +633,11 @@ class Trainer:
             logger.debug(f"Stats: {stats}", extra={"iteration": it})
 
             self._save_log({"iteration": it, **stats})
+
+            if self.tensorboard_logging:
+                for key, value in stats.items():
+                    if value is not None:
+                        self.tb_writer.add_scalar(key, value, it)
 
             if it % self.checkpoint_frquency == 0:
                 logger.info("Saving checkpoint.", extra={"iteration": it})
