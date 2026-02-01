@@ -471,7 +471,9 @@ class Trainer:
         if self.tensorboard_logging:
             from torch.utils.tensorboard import SummaryWriter
 
-            self.tb_writer = SummaryWriter(log_dir=self.log_path)
+            log_dir_tensorboard = self.log_path / f"tensorboard_{log_idx}"
+            os.makedirs(log_dir_tensorboard, exist_ok=True)
+            self.tb_writer = SummaryWriter(log_dir=log_dir_tensorboard)
 
     def _save_log(self, out_log):
         with open(self.log_name, "a") as f:
