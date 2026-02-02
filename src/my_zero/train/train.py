@@ -223,14 +223,16 @@ def train_step(
     return_logits_r = net.g.output_probabilities
 
     for k in range(K + 1):
-        # logits, v_pred = net.f(s, action_mask=legal_masks[:, k, :])
+        s = (
+            s * 0.5 + (s * (1 - 0.5)).detach()
+        )  # According to MuZero pseudocode supplementary material
+
         logits, v_pred = net.f(s, return_logits=return_logits_v)
         # Policy loss: cross-entropy with target visit distribution
         logp = F.log_softmax(logits, dim=-1)
         policy_loss = -(target_pis[:, k, :] * logp).sum(dim=-1)
 
         # Value loss: MSE
-        # value_loss = F.mse_loss(v_pred, target_vs[:, k])
         if return_logits_v:
             target_dist = scalar_to_support(
                 net.f.scale_value(target_vs[:, k]), net.f.support
@@ -245,7 +247,7 @@ def train_step(
         # Dynamics + reward loss for k < K (reward predicted for transition at step k)
         if k < K:
             s_next, r_pred = net.g(s, actions[:, k], return_logits=return_logits_r)
-            # reward_loss = F.mse_loss(r_pred, target_rs[:, k])
+
             if return_logits_r:
                 target_dist_r = scalar_to_support(
                     net.g.scale_value(target_rs[:, k]), net.g.support
