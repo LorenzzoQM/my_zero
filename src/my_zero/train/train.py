@@ -57,6 +57,7 @@ def _worker_self_play(args):
         mcts_num_simulations,
         mcts_config,
         seed,
+        agents_embedding,
     ) = args
 
     # Create env inside worker
@@ -71,7 +72,12 @@ def _worker_self_play(args):
     net.load_state_dict(net_state)
     net.eval()
 
-    mcts = MuZeroMCTS(net.f, net.g, num_actions=env.action_space.n, **mcts_config)
+    if isinstance(env.action_space, gym.spaces.Dict):
+        key_0 = list(env.action_space.keys())[0]
+        n_actions = env.action_space[key_0].n
+    else:
+        n_actions = env.action_space.n
+    mcts = MuZeroMCTS(net.f, net.g, num_actions=n_actions, **mcts_config)
 
     ep, env_callback = self_play_episode(
         env=env,
@@ -82,6 +88,7 @@ def _worker_self_play(args):
         device="cpu",  # usually best for many workers
         mcts_num_simulations=mcts_num_simulations,
         seed=seed,
+        agents_embedding=agents_embedding,
     )
 
     env.close()
@@ -293,7 +300,6 @@ def train_step(
 
 
 class Trainer:
-
     def __init__(
         self,
         env,
@@ -303,6 +309,7 @@ class Trainer:
         net_config=None,
         env_args={},
         eval_env_args=None,
+        agents_embedding=None,
     ):
         self.env = env
         self.net = net
@@ -316,6 +323,8 @@ class Trainer:
         self._setup_logger()
         self.net = torch.compile(self.net).to(self.device)
         logger.info(f"Using device: {self.device}")
+
+        self.agents_embedding = agents_embedding
 
     def _set_config(self, config):
         self.SGD_steps_per_iteration = config.get("SGD_steps_per_iteration", 32)
@@ -345,7 +354,7 @@ class Trainer:
         self.temperature_scheduler_function = config.get(
             "temperature_function", lambda it: 1.0
         )
-        self.c_puct_scheduler_function = config.get("c_puct_function", lambda it: 1.0)
+        self.c_puct_scheduler_function = config.get("c_puct_function", lambda it: 1.5)
         self.dirichlet_eps_scheduler_function = config.get(
             "dirichlet_eps_function", lambda it: 0.25
         )
@@ -396,6 +405,7 @@ class Trainer:
                     self.mcts_class,
                     self.net_config,
                     self.device,
+                    self.agents_embedding,
                 ),
             )
             logger.info("Using %d workers for self-play", self.num_workers)
@@ -429,17 +439,36 @@ class Trainer:
             )
         self._seed += self.self_play_episodes_per_iteration
 
-        avg_length = 0.0
-        avg_reward = 0.0
+        if self.agents_embedding is not None:
+            avg_length = {}
+            avg_reward = {}
+        else:
+            avg_length = 0.0
+            avg_reward = 0.0
         env_callback_data_list = []
         for fut in as_completed(futures):
             ep, env_callback_data = fut.result()
-            replay.add_episode(ep)
-            avg_length += len(ep["rewards"])
-            avg_reward += sum(ep["rewards"])
+            if isinstance(ep, dict):
+                for agent_i in ep.keys():
+                    replay.add_episode(ep[agent_i])
+                    if agent_i not in avg_length.keys():
+                        avg_length[agent_i] = [len(ep[agent_i]["rewards"])]
+                        avg_reward[agent_i] = [ep[agent_i]["rewards"]]
+                    else:
+                        avg_length[agent_i].append(len(ep[agent_i]["rewards"]))
+                        avg_reward[agent_i].append(ep[agent_i]["rewards"])
+            else:
+                replay.add_episode(ep)
+                avg_length += len(ep["rewards"])
+                avg_reward += sum(ep["rewards"])
             env_callback_data_list.append(env_callback_data)
-        avg_length /= self.self_play_episodes_per_iteration
-        avg_reward /= self.self_play_episodes_per_iteration
+        if self.agents_embedding is not None:
+            for agent_i in avg_length.keys():
+                avg_length[agent_i] = np.mean(avg_length[agent_i])
+                avg_reward[agent_i] = np.mean(avg_reward[agent_i])
+        else:
+            avg_length /= self.self_play_episodes_per_iteration
+            avg_reward /= self.self_play_episodes_per_iteration
 
         return (avg_length, avg_reward, env_callback_data_list)
 
@@ -483,7 +512,6 @@ class Trainer:
 
     @staticmethod
     def _summarize_stats(env_callback_data_list):
-
         stats_callbacks = {}
         for data in env_callback_data_list:
             if data is not None:
@@ -503,7 +531,6 @@ class Trainer:
         return stats_callbacks_summary
 
     def train(self):
-
         output_log = []
         self._start_log()
 
@@ -534,8 +561,12 @@ class Trainer:
                     self.run_self_play_executor(replay, it)
                 )
             else:
-                avg_length = 0
-                avg_reward = 0
+                if self.agents_embedding is not None:
+                    avg_length = {}
+                    avg_reward = {}
+                else:
+                    avg_length = 0
+                    avg_reward = 0
                 env_callback_data_list = []
                 net_state = {k: v.cpu() for k, v in self.net.state_dict().items()}
                 for i in range(self.self_play_episodes_per_iteration):
@@ -543,22 +574,39 @@ class Trainer:
                         (
                             self.env,
                             self.env_args,
+                            self.env_callback,
                             self.net_config,
                             net_state,
                             self.temperature_scheduler_function(it),
                             self.mcts_num_simulations,
                             self.mcts_config_self_play,
                             self._seed + i,
+                            self.agents_embedding,
                         )
                     )
-                    replay.add_episode(ep)
-                    env_callback_data_list.extend(env_callback_data)
-                    avg_length += len(ep["rewards"])
-                    avg_reward += sum(ep["rewards"])
+                    if isinstance(ep, dict):
+                        for agent_i in ep.keys():
+                            replay.add_episode(ep[agent_i])
+                            if agent_i not in avg_length.keys():
+                                avg_length[agent_i] = [len(ep[agent_i]["rewards"])]
+                                avg_reward[agent_i] = [sum(ep[agent_i]["rewards"])]
+                            else:
+                                avg_length[agent_i].append(len(ep[agent_i]["rewards"]))
+                                avg_reward[agent_i].append(sum(ep[agent_i]["rewards"]))
+                    else:
+                        replay.add_episode(ep)
+                        env_callback_data_list.extend(env_callback_data)
+                        avg_length += len(ep["rewards"])
+                        avg_reward += sum(ep["rewards"])
 
                 self._seed += self.self_play_episodes_per_iteration
-                avg_length /= self.self_play_episodes_per_iteration
-                avg_reward /= self.self_play_episodes_per_iteration
+                if self.agents_embedding is not None:
+                    for agent_i in avg_length.keys():
+                        avg_length[agent_i] = np.mean(avg_length[agent_i])
+                        avg_reward[agent_i] = np.mean(avg_reward[agent_i])
+                else:
+                    avg_length /= self.self_play_episodes_per_iteration
+                    avg_reward /= self.self_play_episodes_per_iteration
 
             stats_callbacks = self._summarize_stats(env_callback_data_list)
 
@@ -634,8 +682,12 @@ class Trainer:
 
             stats_callbacks_eval = {}
             if it % self.eval_frequency == 0:
-                eval_r = 0
-                eval_len = 0
+                if self.agents_embedding is not None:
+                    avg_length = {}
+                    avg_reward = {}
+                else:
+                    avg_length = []
+                    avg_reward = []
                 eval_callback_data_list = []
                 net_state = {k: v.cpu() for k, v in self.net.state_dict().items()}
                 for i in range(4):
@@ -650,22 +702,35 @@ class Trainer:
                             self.mcts_num_simulations,
                             self.mcts_config_self_play,
                             self._seed + i,
+                            self.agents_embedding,
                         )
                     )
-                    total_reward = sum(ep["rewards"])
-                    (
+                    if isinstance(ep, dict):
+                        for agent_i in ep.keys():
+                            if agent_i not in avg_length.keys():
+                                avg_length[agent_i] = [len(ep[agent_i]["rewards"])]
+                                avg_reward[agent_i] = [sum(ep[agent_i]["rewards"])]
+                            else:
+                                avg_length[agent_i].append(len(ep[agent_i]["rewards"]))
+                                avg_reward[agent_i].append(sum(ep[agent_i]["rewards"]))
+                    else:
                         eval_callback_data_list.append(eval_callback_data)
-                        if eval_callback_data is not None
-                        else []
-                    )
-                    eval_r += total_reward
-                    eval_len += len(ep["rewards"])
+                        avg_length.append(len(ep["rewards"]))
+                        avg_reward.append(sum(ep["rewards"]))
+
+                if self.agents_embedding is not None:
+                    for agent_i in avg_length.keys():
+                        avg_length[agent_i] = np.mean(avg_length[agent_i])
+                        avg_reward[agent_i] = np.mean(avg_reward[agent_i])
+                else:
+                    avg_length = np.mean(avg_length)
+                    avg_reward = np.mean(avg_reward)
                 logger.debug(
-                    f"Eval over 4 episodes: avg reward={eval_r/4}, avg length={eval_len/4}",
+                    f"Eval over 4 episodes: avg reward={avg_reward}, avg length={avg_length}",
                     extra={"iteration": it},
                 )
-                stats["eval_avg_reward"] = eval_r / 4
-                stats["eval_avg_length"] = eval_len / 4
+                stats["eval_avg_reward"] = avg_reward
+                stats["eval_avg_length"] = avg_length
                 stats_callbacks_eval = self._summarize_stats(eval_callback_data_list)
             else:
                 stats["eval_avg_reward"] = None
@@ -679,7 +744,7 @@ class Trainer:
             if self.tensorboard_logging:
                 for key, value in stats.items():
                     if value is not None:
-                        self.tb_writer.add_scalar(key, value, it)
+                        self._to_tensorboard(key, value, it)
                 for key, value in stats_callbacks.items():
                     self.tb_writer.add_scalar(f"self_play/{key}", value, it)
                 for key, value in stats_callbacks_eval.items():
@@ -705,3 +770,10 @@ class Trainer:
                     )
 
         return output_log
+
+    def _to_tensorboard(self, key, value, it):
+        if isinstance(value, dict):
+            for key_1, value_1 in value.items():
+                self._to_tensorboard(f"{key}/{key_1}", value_1, it)
+        else:
+            self.tb_writer.add_scalar(key, value, it)

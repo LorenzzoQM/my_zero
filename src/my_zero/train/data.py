@@ -9,10 +9,9 @@ from typing import List, Tuple, Any, Optional, Union
 
 @dataclass
 class Episode:
-
-    obs: Union[np.ndarray, List[Any]]
+    obs: Union[np.ndarray, List[Any], dict[str, Union[np.ndarray, List[Any]]]]
     actions: Union[np.ndarray, List[Any]]
-    rewards: Union[np.ndarray, List[Any]]
+    rewards: Union[np.ndarray, List[Any], dict[str, Union[np.ndarray, List[Any]]]]
     terminated: Union[np.ndarray, List[Any]]
     truncated: Union[np.ndarray, List[Any]]
     pis: Union[np.ndarray, List[Any]]
@@ -35,6 +34,7 @@ def self_play_episode(
     max_steps=10_000,
     mcts_num_simulations=50,
     seed=None,
+    agents_embedding: Union[None, dict[str, np.ndarray]] = None,
 ) -> Tuple[Episode, Optional[Any]]:
     """
     net should expose:
@@ -44,19 +44,41 @@ def self_play_episode(
     mcts.run(root_latent, legal_mask, num_simulations) -> visit_counts, root_value, root_value_raw
     """
     obs, _ = env.reset(seed=seed)
+    if agents_embedding is not None:
+        _multi_agent = True
+    else:
+        _multi_agent = False
     done = False
 
-    episode = Episode(
-        obs=[],
-        actions=[],
-        rewards=[],
-        terminated=[],
-        truncated=[],
-        pis=[],
-        legal_masks=[],
-        root_v_est=[],
-        priority=1.0,  # for prioritized replay
-    )
+    if not _multi_agent:
+        episode = Episode(
+            obs=[],
+            actions=[],
+            rewards=[],
+            terminated=[],
+            truncated=[],
+            pis=[],
+            legal_masks=[],
+            root_v_est=[],
+            priority=1.0,  # for prioritized replay
+        )
+
+    else:
+        agents = list(agents_embedding.keys())
+        episode_dict = {
+            agent: Episode(
+                obs=[],
+                actions=[],
+                rewards=[],
+                terminated=[],
+                truncated=[],
+                pis=[],
+                legal_masks=[],
+                root_v_est=[],
+                priority=1.0,  # for prioritized replay
+            )
+            for agent in agents
+        }
 
     t = 0
     while not done and t < max_steps:
@@ -66,66 +88,147 @@ def self_play_episode(
         # legal_mask = None
 
         # Encode observation -> latent
-        obs_t = (
-            torch.as_tensor(obs, dtype=torch.float32, device=device)
-            .unsqueeze(0)
-            .to(device)
-        )  # (1, obs_dim)
-        with torch.no_grad():
-            root_latent = net.h(obs_t).squeeze(0)  # (latent_dim,)
-
-            # MCTS
-            visit_counts, root_v_est, _ = mcts.run(
-                root_latent=root_latent,
-                legal_actions=legal_mask,
-                num_simulations=mcts_num_simulations,
-                add_root_noise=True,
-            )
-
-        action, pi_target = mcts.select_action_from_visits(
-            visit_counts, temperature=temperature, return_pi=True
-        )
-
-        # Step env
-        next_obs, reward, terminated, truncated, _ = env.step(action)
-        done = bool(terminated or truncated)
-
-        # Store
-        episode["obs"].append(obs)
-        episode["actions"].append(action)
-        episode["rewards"].append(float(reward))
-        episode["terminated"].append(terminated)
-        episode["truncated"].append(truncated)
-        episode["pis"].append(pi_target)
-        episode["legal_masks"].append(legal_mask.astype(np.float32))
-        episode["root_v_est"].append(float(root_v_est))
-
-        obs = next_obs
-        t += 1
-
-        if truncated:
+        if not _multi_agent:
             obs_t = (
                 torch.as_tensor(obs, dtype=torch.float32, device=device)
                 .unsqueeze(0)
                 .to(device)
-            )
+            )  # (1, obs_dim)
+
             with torch.no_grad():
                 root_latent = net.h(obs_t).squeeze(0)  # (latent_dim,)
 
-                _, root_v_est, _ = mcts.run(
+                # MCTS
+                visit_counts, root_v_est, _ = mcts.run(
                     root_latent=root_latent,
                     legal_actions=legal_mask,
                     num_simulations=mcts_num_simulations,
                     add_root_noise=True,
                 )
+
+            action, pi_target = mcts.select_action_from_visits(
+                visit_counts, temperature=temperature, return_pi=True
+            )
+        else:
+            agents_list = list(obs.keys())
+            obs_agents = {}
+            for agent in agents_list:
+                obs_a = np.concatenate([obs[agent], agents_embedding[agent]], axis=-1)
+                obs_agents[agent] = torch.as_tensor(
+                    obs_a, dtype=torch.float32, device=device
+                ).unsqueeze(0)
+
+            action = {}
+            pi_target = {}
+            root_v_est = {}
+            for agent in agents_list:
+                with torch.no_grad():
+                    root_latent = net.h(obs_agents[agent]).squeeze(0)  # (latent_dim,)
+
+                    # MCTS
+                    visit_counts_a, root_v_est_a, _ = mcts.run(
+                        root_latent=root_latent,
+                        legal_actions=legal_mask,
+                        num_simulations=mcts_num_simulations,
+                        add_root_noise=True,
+                    )
+
+                action_a, pi_target_a = mcts.select_action_from_visits(
+                    visit_counts_a, temperature=temperature, return_pi=True
+                )
+                action[agent] = action_a
+                pi_target[agent] = pi_target_a
+                root_v_est[agent] = root_v_est_a
+
+        # Step env
+        if _multi_agent:
+            # Prevents modification of the action dict in place
+            action_copy = action.copy()
+        else:
+            action_copy = action
+        next_obs, reward, terminated, truncated, _ = env.step(action_copy)
+        if _multi_agent:
+            done = any(terminated.values()) or any(truncated.values())
+        else:
+            done = bool(terminated or truncated)
+
+        if _multi_agent:
+            for agent in agents_list:
+                episode_dict[agent]["obs"].append(
+                    obs_agents[agent].squeeze().numpy().copy()
+                )
+                episode_dict[agent]["actions"].append(action[agent])
+                episode_dict[agent]["rewards"].append(float(reward[agent]))
+                episode_dict[agent]["terminated"].append(any(terminated.values()))
+                episode_dict[agent]["truncated"].append(any(truncated.values()))
+                episode_dict[agent]["pis"].append(pi_target[agent].copy())
+                episode_dict[agent]["root_v_est"].append(float(root_v_est[agent]))
+                episode_dict[agent]["legal_masks"].append(legal_mask.astype(np.float32))
+
+        else:
+            episode["obs"].append(obs)
+            episode["actions"].append(action)
+            episode["rewards"].append(float(reward))
+            episode["terminated"].append(terminated)
+            episode["truncated"].append(truncated)
+            episode["pis"].append(pi_target)
+            episode["legal_masks"].append(legal_mask.astype(np.float32))
             episode["root_v_est"].append(float(root_v_est))
+
+        obs = next_obs
+        t += 1
+
+        if (_multi_agent and any(truncated.values())) or truncated:
+            if not _multi_agent:
+                obs_t = (
+                    torch.as_tensor(obs, dtype=torch.float32, device=device)
+                    .unsqueeze(0)
+                    .to(device)
+                )
+                with torch.no_grad():
+                    root_latent = net.h(obs_t).squeeze(0)  # (latent_dim,)
+
+                    _, root_v_est, _ = mcts.run(
+                        root_latent=root_latent,
+                        legal_actions=legal_mask,
+                        num_simulations=mcts_num_simulations,
+                        add_root_noise=True,
+                    )
+                episode["root_v_est"].append(float(root_v_est))
+            else:
+                agents_list = list(obs.keys())
+                obs_agents = {}
+                for agent in agents_list:
+                    obs_a = np.concatenate(
+                        [obs[agent], agents_embedding[agent]], axis=-1
+                    )
+                    obs_agents[agent] = torch.as_tensor(
+                        obs_a, dtype=torch.float32, device=device
+                    ).unsqueeze(0)
+
+                for agent in agents_list:
+                    with torch.no_grad():
+                        root_latent = net.h(obs_agents[agent]).squeeze(
+                            0
+                        )  # (latent_dim,)
+
+                        _, root_v_est_a, _ = mcts.run(
+                            root_latent=root_latent,
+                            legal_actions=legal_mask,
+                            num_simulations=mcts_num_simulations,
+                            add_root_noise=True,
+                        )
+                    episode_dict[agent]["root_v_est"].append(float(root_v_est_a))
 
     if env_callback is not None:
         env_callback_data = env_callback(env)
     else:
-        env_callback_data = None
+        env_callback_data = {}
 
-    return episode, env_callback_data
+    if _multi_agent:
+        return episode_dict, env_callback_data
+    else:
+        return episode, env_callback_data
 
 
 class ReplayBuffer:

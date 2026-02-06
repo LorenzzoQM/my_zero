@@ -10,6 +10,7 @@ _WORKER_NET = None
 _WORKER_DEVICE = None
 _MCTS_CLASS = None
 _ENV_CALLBACK = None
+_AGENTS_EMBEDDING = None
 
 
 def _init_self_play_worker(
@@ -21,9 +22,10 @@ def _init_self_play_worker(
     mcts_class,
     net_config,
     device_str="cpu",
+    agents_embedding=None,
 ):
     """Runs once per worker process."""
-    global _WORKER_ENV, _WORKER_NET, _WORKER_DEVICE, _MCTS_CLASS, _ENV_CALLBACK
+    global _WORKER_ENV, _WORKER_NET, _WORKER_DEVICE, _MCTS_CLASS, _ENV_CALLBACK, _AGENTS_EMBEDDING
 
     _WORKER_DEVICE = torch.device(device_str)
 
@@ -49,6 +51,7 @@ def _init_self_play_worker(
 
     _MCTS_CLASS = mcts_class
     _ENV_CALLBACK = env_callback
+    _AGENTS_EMBEDDING = agents_embedding
 
 
 def _worker_self_play_one_episode(
@@ -59,7 +62,7 @@ def _worker_self_play_one_episode(
     mcts_config_self_play,
     seed,
 ):
-    global _WORKER_ENV, _WORKER_NET, _WORKER_DEVICE, _ENV_CALLBACK
+    global _WORKER_ENV, _WORKER_NET, _WORKER_DEVICE, _ENV_CALLBACK, _AGENTS_EMBEDDING
 
     state = {
         k: v.to(_WORKER_DEVICE, non_blocking=True) for k, v in net_state_cpu.items()
@@ -68,10 +71,16 @@ def _worker_self_play_one_episode(
     target = _WORKER_NET._orig_mod if hasattr(_WORKER_NET, "_orig_mod") else _WORKER_NET
     target.load_state_dict(state, strict=True)
 
+    if isinstance(_WORKER_ENV.action_space, gym.spaces.Dict):
+        key_0 = list(_WORKER_ENV.action_space.keys())[0]
+        n_actions = _WORKER_ENV.action_space[key_0].n
+    else:
+        n_actions = _WORKER_ENV.action_space.n
+
     mcts = mcts_class(
         prediction_net=_WORKER_NET.f,
         dynamics_net=_WORKER_NET.g,
-        num_actions=_WORKER_ENV.action_space.n,
+        num_actions=n_actions,
         **mcts_config_self_play,
     )
 
@@ -84,5 +93,6 @@ def _worker_self_play_one_episode(
         mcts_num_simulations=mcts_num_simulations,
         seed=seed,
         device=_WORKER_DEVICE,
+        agents_embedding=_AGENTS_EMBEDDING,
     )
     return episode, env_callback_data
