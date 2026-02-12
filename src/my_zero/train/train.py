@@ -16,6 +16,7 @@ import os
 import json
 import logging
 import multiprocessing as mp
+from itertools import chain
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +191,13 @@ def train_step(
         for k in range(K):
             t = t0 + k
             acts.append(
-                ep["actions"][t] if t < len(ep["actions"]) else torch.tensor([0])
+                ep["actions"][t]
+                if t < len(ep["actions"])
+                else (
+                    torch.tensor([0])
+                    if isinstance(ep["actions"][0], torch.Tensor)
+                    else 0
+                )
             )
         action_seqs.append(acts)
 
@@ -554,7 +561,11 @@ class Trainer:
 
         stats_callbacks_summary = {}
         for key, values in stats_callbacks.items():
-            v_arr = np.asanyarray(values)
+            try:
+                v_arr = np.asanyarray(values)
+            except ValueError:
+                values = list(chain.from_iterable(values))
+                v_arr = np.asanyarray(values)
 
             if v_arr.size > 0:
                 stats_callbacks_summary[f"{key}_mean"] = np.mean(v_arr).item()

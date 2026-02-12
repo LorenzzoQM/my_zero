@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 from typing import Union
 from torch.distributions import Categorical, Normal
-import numpy as np
 
 
 def scale_value_function(x, eps=0.001):
@@ -275,7 +274,9 @@ class PredictorMLPCont(PredictorMLP):
         self.policy_head = nn.Linear(self.body.output_dim, num_actions * 2)
         self.lims = lims
 
-    def sample_action(self, logits: torch.Tensor, return_prob=True) -> torch.Tensor:
+    def sample_action(
+        self, logits: torch.Tensor, n_samples: int = 1, return_prob=True
+    ) -> torch.Tensor:
         # mu, log_sigma = torch.chunk(
         #     torch.tensor(logits, dtype=torch.float32), 2, dim=-1
         # )
@@ -288,18 +289,21 @@ class PredictorMLPCont(PredictorMLP):
         dist = Normal(mu, sigma)
 
         # 4. Sample using the reparameterization trick
-        z = dist.rsample()
+        z = dist.rsample(sample_shape=(n_samples,))
         a = torch.tanh(z)
-        low, high = self.lims
+        low_s, high_s = self.lims
+        low = torch.tensor(low_s, device=logits.device, dtype=a.dtype)
+        high = torch.tensor(high_s, device=logits.device, dtype=a.dtype)
+
         a_scaled = low + (a + 1) * 0.5 * (high - low)
 
-        logp = dist.log_prob(z).sum(-1) - torch.log(1 - a.pow(2) + 1e-6).sum(-1)
-        logp -= torch.log(torch.tensor((high - low) / 2, device=logp.device))
-
-        if return_prob:
-            return a_scaled, torch.exp(logp)
-        else:
+        if not return_prob:
             return a_scaled
+
+        logp = dist.log_prob(z).sum(-1) - torch.log(1 - a.pow(2) + 1e-6).sum(-1)
+        logp -= torch.log((high - low) * 0.5)
+
+        return a_scaled, torch.exp(logp)
 
     def logp(self, logits: torch.Tensor, action: torch.Tensor):
         mu, log_std = torch.chunk(logits, 2, dim=-1)
@@ -307,7 +311,9 @@ class PredictorMLPCont(PredictorMLP):
         std = log_std.exp()
 
         # 1. unscale action back to [-1, 1]
-        low, high = self.lims
+        low_s, high_s = self.lims
+        low = torch.tensor(low_s, device=logits.device, dtype=action.dtype)
+        high = torch.tensor(high_s, device=logits.device, dtype=action.dtype)
         a = 2 * (action - low) / (high - low) - 1
         a = a.clamp(-1 + 1e-6, 1 - 1e-6)
 
@@ -322,7 +328,7 @@ class PredictorMLPCont(PredictorMLP):
         logp -= torch.log(1 - a.pow(2) + 1e-6).sum(dim=-1)
 
         # 5. scale correction
-        logp -= torch.log(torch.tensor((high - low) / 2, device=logp.device))
+        logp -= torch.log((high - low) * 0.5)
 
         return logp
 

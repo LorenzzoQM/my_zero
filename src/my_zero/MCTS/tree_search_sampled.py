@@ -65,6 +65,29 @@ def puct_mu_zero(
     return val
 
 
+def puct_mu_zero_batch(
+    Q_sa: np.ndarray,
+    P_sa: np.ndarray,
+    N_s: float,
+    N_sa: np.ndarray,
+    Q_min: float,
+    Q_max: float,
+    c1: float = 1.25,
+    c2: float = 19652,
+) -> float:
+
+    q_range = Q_max - Q_min
+    if math.isfinite(q_range) and math.isfinite(Q_min) and q_range > 1e-6:
+        Q_sa = (Q_sa - Q_min) / (q_range + 1e-8)
+    else:
+        Q_sa = np.zeros_like(Q_sa)
+
+    val = Q_sa + P_sa * (math.sqrt(N_s) / (1 + N_sa)) * (
+        c1 + math.log((N_s + c2 + 1) / c2)
+    )
+    return val
+
+
 class MuZeroSampledMCTS:
     def __init__(
         self,
@@ -132,7 +155,7 @@ class MuZeroSampledMCTS:
             # 1) Selection: descend by PUCT until reaching an unexpanded node
             while node.expanded():
                 parent = node
-                action, node = self._select_child(search_path[-1])
+                action, node = self._select_child_batch(search_path[-1])
 
                 # Lazily materialize child latent via dynamics the first time we traverse it
                 if node.latent is None:
@@ -175,6 +198,7 @@ class MuZeroSampledMCTS:
             root_value,
         )
 
+    # Slow for larger action spaces
     def _select_child(self, parent: Node):
         best_action, best_child, best_score = None, None, -1e18
         for action, child in parent.children.items():
@@ -194,6 +218,34 @@ class MuZeroSampledMCTS:
                 best_score = score
                 best_action, best_child = action, child
         return best_action, best_child
+
+    def _select_child_batch(self, parent: Node):
+
+        children = parent.children
+        parent_action_values = []
+        parent_visit_count = parent.visit_count
+        parent_action_counts = []
+        child_priors = []
+        actions = []
+        child_list = []
+        for action, child in children.items():
+            parent_action_values.append(parent.action_values.get(action, 0.0))
+            parent_action_counts.append(parent.action_counts.get(action, 0))
+            child_priors.append(child.prior)
+            actions.append(action)
+            child_list.append(child)
+
+        scores = puct_mu_zero_batch(
+            np.array(parent_action_values),
+            np.array(child_priors),
+            parent_visit_count,
+            np.array(parent_action_counts),
+            self.q_min,
+            self.q_max,
+        )
+
+        best_index = np.argmax(scores)
+        return actions[best_index], child_list[best_index]
 
     @torch.no_grad()
     def _expand(
@@ -225,10 +277,14 @@ class MuZeroSampledMCTS:
             num_sampled_actions = num_sampled_actions_node
         else:
             num_sampled_actions = self.num_sampled_actions
-        for i in range(num_sampled_actions):
-            action_i, priors_i = self.f.sample_action(policy_logits)
-            priors_beta.append(priors_i)
-            actions_list.append(action_i)
+        # for i in range(num_sampled_actions):
+        #     action_i, priors_i = self.f.sample_action(policy_logits)
+        #     priors_beta.append(priors_i)
+        #     actions_list.append(action_i)
+
+        actions_list, priors_beta = self.f.sample_action(
+            policy_logits, n_samples=num_sampled_actions, return_prob=True
+        )
 
         node.children = {}
         priors_beta = np.array(priors_beta)
