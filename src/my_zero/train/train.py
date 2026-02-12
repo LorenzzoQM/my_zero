@@ -196,7 +196,7 @@ def train_step(
                 else (
                     torch.tensor([0])
                     if isinstance(ep["actions"][0], torch.Tensor)
-                    else 0
+                    else [0]
                 )
             )
         action_seqs.append(acts)
