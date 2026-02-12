@@ -43,8 +43,6 @@ def puct_score(parent: Node, child: Node, c_puct: float) -> float:
 
 
 def puct_mu_zero(
-    parent: Node,
-    child: Node,
     Q_sa: float,
     P_sa: float,
     N_s: float,
@@ -55,13 +53,15 @@ def puct_mu_zero(
     c2: float = 19652,
 ) -> float:
 
-    if np.isfinite(Q_max) and np.isfinite(Q_min) and Q_max > Q_min:
+    q_range = Q_max - Q_min
+    if math.isfinite(q_range) and math.isfinite(Q_min) and q_range > 1e-6:
         Q_sa = (Q_sa - Q_min) / (Q_max - Q_min + 1e-8)
     else:
         Q_sa = 0.0
 
-    # print(Q_sa)
-    val = Q_sa + P_sa * (np.sqrt(N_s) / (1 + N_sa)) * (c1 + np.log((N_s + c2 + 1) / c2))
+    val = Q_sa + P_sa * (math.sqrt(N_s) / (1 + N_sa)) * (
+        c1 + math.log((N_s + c2 + 1) / c2)
+    )
     return val
 
 
@@ -182,8 +182,6 @@ class MuZeroSampledMCTS:
                 score = puct_score(parent, child, self.c_puct)
             else:
                 score = puct_mu_zero(
-                    parent,
-                    child,
                     parent.action_values.get(action, 0.0),
                     child.prior,
                     parent.visit_count,
