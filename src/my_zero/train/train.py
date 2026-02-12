@@ -54,6 +54,7 @@ def _worker_self_play(args):
         net_config,
         net_state,
         temperature,
+        mcts_class,
         mcts_num_simulations,
         mcts_config,
         seed,
@@ -74,10 +75,15 @@ def _worker_self_play(args):
 
     if isinstance(env.action_space, gym.spaces.Dict):
         key_0 = list(env.action_space.keys())[0]
-        n_actions = env.action_space[key_0].n
+        if isinstance(env.action_space[key_0], gym.spaces.Discrete):
+            n_actions = env.action_space[key_0].n
+        else:
+            n_actions = env.action_space[key_0].shape[0]
+    elif isinstance(env.action_space, gym.spaces.Box):
+        n_actions = env.action_space.shape[0]
     else:
         n_actions = env.action_space.n
-    mcts = MuZeroMCTS(net.f, net.g, num_actions=n_actions, **mcts_config)
+    mcts = mcts_class(net.f, net.g, num_actions=n_actions, **mcts_config)
 
     ep, env_callback = self_play_episode(
         env=env,
@@ -164,11 +170,12 @@ def train_step(
     (
         obs0_list,
         action_seqs,
+        actions_sampled_list,
         target_pis_list,
         target_rs_list,
         target_vs_list,
         legal_masks_list,
-    ) = ([], [], [], [], [], [])
+    ) = ([], [], [], [], [], [], [])
 
     if is_weights is None:
         w = None
@@ -182,8 +189,18 @@ def train_step(
         acts = []
         for k in range(K):
             t = t0 + k
-            acts.append(ep["actions"][t] if t < len(ep["actions"]) else 0)
+            acts.append(
+                ep["actions"][t] if t < len(ep["actions"]) else torch.tensor([0])
+            )
         action_seqs.append(acts)
+
+        if len(ep["actions_sampled"]) > 0:
+            for k in range(K):
+                t = t0 + k
+                if t < len(ep["actions_sampled"]):
+                    actions_sampled_list.append(ep["actions_sampled"][t])
+                else:
+                    actions_sampled_list.append(None)
 
         pis, rs, vs = make_targets(ep, t0, K=K, n_step=n_step, gamma=gamma)
         target_pis_list.append(pis)  # (K+1, A)
@@ -205,6 +222,9 @@ def train_step(
     )  # (B, obs_dim)
     actions = torch.as_tensor(
         np.array(action_seqs), dtype=torch.long, device=device
+    )  # (B, K)
+    actions_sampled = torch.as_tensor(
+        np.array(actions_sampled_list), dtype=torch.long, device=device
     )  # (B, K)
     target_pis = torch.as_tensor(
         np.array(target_pis_list), dtype=torch.float32, device=device
@@ -236,8 +256,14 @@ def train_step(
 
         logits, v_pred = net.f(s, return_logits=return_logits_v)
         # Policy loss: cross-entropy with target visit distribution
-        logp = F.log_softmax(logits, dim=-1)
-        policy_loss = -(target_pis[:, k, :] * logp).sum(dim=-1)
+        # logp = F.log_softmax(logits, dim=-1)
+        # policy_loss = -(target_pis[:, k, :] * logp).sum(dim=-1)
+        if len(actions_sampled_list) > 0:
+            policy_loss = net.f.cross_entropy_loss(
+                logits, actions_sampled[:, k], target_pis[:, k]
+            )
+        else:
+            policy_loss = net.f.cross_entropy_loss(logits, target_pis[:, k])
 
         # Value loss: MSE
         if return_logits_v:
@@ -513,8 +539,12 @@ class Trainer:
     @staticmethod
     def _summarize_stats(env_callback_data_list):
         stats_callbacks = {}
+        if len(env_callback_data_list) == 0:
+            return {}
         for data in env_callback_data_list:
             if data is not None:
+                if not isinstance(data, dict):
+                    continue
                 for key, value in data.items():
                     if key not in stats_callbacks:
                         stats_callbacks[key] = [value]
@@ -578,6 +608,7 @@ class Trainer:
                             self.net_config,
                             net_state,
                             self.temperature_scheduler_function(it),
+                            self.mcts_class,
                             self.mcts_num_simulations,
                             self.mcts_config_self_play,
                             self._seed + i,
@@ -699,6 +730,7 @@ class Trainer:
                             self.net_config,
                             net_state,
                             self.temperature_scheduler_function(it),
+                            self.mcts_class,
                             self.mcts_num_simulations,
                             self.mcts_config_self_play,
                             self._seed + i,

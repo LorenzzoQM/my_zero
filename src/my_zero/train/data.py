@@ -11,6 +11,9 @@ from typing import List, Tuple, Any, Optional, Union
 class Episode:
     obs: Union[np.ndarray, List[Any], dict[str, Union[np.ndarray, List[Any]]]]
     actions: Union[np.ndarray, List[Any]]
+    actions_sampled: Optional[
+        Union[np.ndarray, List[Any], dict[str, Union[np.ndarray, List[Any]]]]
+    ] = None
     rewards: Union[np.ndarray, List[Any], dict[str, Union[np.ndarray, List[Any]]]]
     terminated: Union[np.ndarray, List[Any]]
     truncated: Union[np.ndarray, List[Any]]
@@ -54,6 +57,7 @@ def self_play_episode(
         episode = Episode(
             obs=[],
             actions=[],
+            actions_sampled=[],
             rewards=[],
             terminated=[],
             truncated=[],
@@ -69,6 +73,7 @@ def self_play_episode(
             agent: Episode(
                 obs=[],
                 actions=[],
+                actions_sampled=[],
                 rewards=[],
                 terminated=[],
                 truncated=[],
@@ -94,7 +99,7 @@ def self_play_episode(
                 .unsqueeze(0)
                 .to(device)
             )  # (1, obs_dim)
-
+            actions_sampled = None
             with torch.no_grad():
                 root_latent = net.h(obs_t).squeeze(0)  # (latent_dim,)
 
@@ -109,6 +114,8 @@ def self_play_episode(
             action, pi_target = mcts.select_action_from_visits(
                 visit_counts, temperature=temperature, return_pi=True
             )
+            if isinstance(visit_counts, dict):
+                actions_sampled = visit_counts["actions"]
         else:
             agents_list = list(obs.keys())
             obs_agents = {}
@@ -121,6 +128,7 @@ def self_play_episode(
             action = {}
             pi_target = {}
             root_v_est = {}
+            actions_sampled_dict = {}
             for agent in agents_list:
                 with torch.no_grad():
                     root_latent = net.h(obs_agents[agent]).squeeze(0)  # (latent_dim,)
@@ -139,6 +147,8 @@ def self_play_episode(
                 action[agent] = action_a
                 pi_target[agent] = pi_target_a
                 root_v_est[agent] = root_v_est_a
+                if isinstance(visit_counts_a, dict):
+                    actions_sampled_dict[agent] = visit_counts_a["actions"]
 
         # Step env
         if _multi_agent:
@@ -164,10 +174,15 @@ def self_play_episode(
                 episode_dict[agent]["pis"].append(pi_target[agent].copy())
                 episode_dict[agent]["root_v_est"].append(float(root_v_est[agent]))
                 episode_dict[agent]["legal_masks"].append(legal_mask.astype(np.float32))
-
+                if len(actions_sampled_dict.keys()) > 0:
+                    episode_dict[agent]["actions_sampled"].append(
+                        actions_sampled_dict[agent]
+                    )
         else:
             episode["obs"].append(obs)
             episode["actions"].append(action)
+            if actions_sampled is not None:
+                episode["actions_sampled"].append(actions_sampled)
             episode["rewards"].append(float(reward))
             episode["terminated"].append(terminated)
             episode["truncated"].append(truncated)

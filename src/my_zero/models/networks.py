@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from typing import Union
+from torch.distributions import Categorical, Normal
 
 
 def scale_value_function(x, eps=0.001):
@@ -139,7 +140,10 @@ class DynamicsMLP(nn.Module):
             self.latent_dim, len(support) if output_probabilities else 1
         )
         self.normalize_latent = normalize_latent
-        self.action_embed = nn.Embedding(num_actions, action_embed_dim)
+        if action_embed_dim > 0:
+            self.action_embed = nn.Embedding(num_actions, action_embed_dim)
+        else:
+            self.action_embed = self.action_embed = lambda x: x.view(x.size(0), -1)
         self.output_probabilities = output_probabilities
         self.support = support
         self.scale_value = (lambda x: x) if not scale_value else scale_value_function
@@ -219,6 +223,116 @@ class PredictorMLP(nn.Module):
                 support_to_scalar(probs, self.support)
             )
 
+    def sample_action(
+        self,
+        logits: torch.Tensor,
+    ) -> torch.Tensor:
+        policy_dist = Categorical(logits=logits)
+        action = policy_dist.sample()
+        return action
+
+    def logp(
+        self,
+        logits: torch.Tensor,
+    ) -> torch.Tensor:
+        logp = nn.functional.log_softmax(logits, dim=-1)
+        return logp
+
+    def cross_entropy_loss(
+        self,
+        logits: torch.Tensor,
+        target_probs: torch.Tensor,
+    ) -> torch.Tensor:
+        logp = self.logp(logits)
+        loss = -torch.sum(target_probs * logp, dim=-1)
+        return loss
+
+
+class PredictorMLPCont(PredictorMLP):
+
+    def __init__(
+        self,
+        body: nn.Module,
+        num_actions: int,
+        output_probabilities: bool = False,
+        support: torch.Tensor = None,
+        scale_value: bool = False,
+        lims: tuple[float, float] = (-1.0, 1.0),
+    ):
+
+        super().__init__(
+            body=body,
+            num_actions=num_actions,
+            output_probabilities=output_probabilities,
+            support=support,
+            scale_value=scale_value,
+        )
+        self.policy_head = nn.Linear(self.body.output_dim, num_actions * 2)
+        self.lims = lims
+
+    def sample_action(self, logits: torch.Tensor, return_prob=True) -> torch.Tensor:
+        mu, log_sigma = torch.chunk(
+            torch.tensor(logits, dtype=torch.float32), 2, dim=-1
+        )
+
+        sigma = torch.exp(log_sigma).clamp(min=1e-3, max=1.0)
+
+        dist = Normal(mu, sigma)
+
+        # 4. Sample using the reparameterization trick
+        z = dist.rsample()
+        # action = torch.clamp(action, self.lims[0], self.lims[1])
+        action = torch.tanh(z)
+        a_scaled = self.lims[0] + (action + 1) * 0.5 * (self.lims[1] - self.lims[0])
+
+        logp = dist.log_prob(z).sum(-1) - torch.log(1 - action.pow(2) + 1e-6).sum(-1)
+
+        if return_prob:
+            return a_scaled, torch.exp(logp)
+        else:
+            return a_scaled
+
+    def logp(self, logits: torch.Tensor, action: torch.Tensor):
+        mu, log_std = torch.chunk(logits, 2, dim=-1)
+        log_std = log_std.clamp(-5, 2)
+        std = log_std.exp()
+
+        # 1. unscale action back to [-1, 1]
+        low, high = self.lims
+        a = 2 * (action - low) / (high - low) - 1
+        a = a.clamp(-1 + 1e-6, 1 - 1e-6)
+
+        # 2. inverse tanh
+        z = 0.5 * (torch.log1p(a) - torch.log1p(-a))  # atanh
+
+        # 3. base log-prob under Normal
+        dist = Normal(mu, std)
+        logp = dist.log_prob(z).sum(dim=-1)
+
+        # 4. tanh correction
+        logp -= torch.log(1 - a.pow(2) + 1e-6).sum(dim=-1)
+
+        # 5. scale correction
+        logp -= torch.log((self.lims[1] - self.lims[0]) / 2).sum()
+
+        return logp
+
+    def cross_entropy_loss(self, logits, actions, pi_target):
+        # logits: (B, 2*act_dim)
+        B, M, act_dim = actions.shape
+
+        # Expand logits to match actions
+        logits_exp = logits.unsqueeze(1).expand(
+            B, M, logits.shape[-1]
+        )  # (B, M, 2*act_dim)
+
+        # logp for each sampled action
+        logp = self.logp(logits_exp, actions)  # (B, M)
+
+        # Cross-entropy with soft targets
+        loss = -(pi_target * logp).sum(dim=1)  # (B,)
+        return loss
+
 
 class MuZeroNet(nn.Module):
     def __init__(self, h=None, g=None, f=None, net_config=None):
@@ -235,6 +349,11 @@ class MuZeroNet(nn.Module):
         assert (f is not None) or (
             f_config is not None
         ), "Either f or f_config must be provided"
+
+        self.continuous_actions = (
+            net_config.get("continuous_actions", False) if net_config else False
+        )
+
         self.h = h if h is not None else self._create_encoder(h_config)
         self.g = g if g is not None else self._create_dynamics(g_config)
         self.f = f if f is not None else self._create_predictor(f_config)
@@ -252,5 +371,8 @@ class MuZeroNet(nn.Module):
 
     def _create_predictor(self, config: dict) -> nn.Module:
         body = BodyMLP(**config["body"])
-        predictor = PredictorMLP(body=body, **config.get("f", {}))
+        if self.continuous_actions:
+            predictor = PredictorMLPCont(body=body, **config.get("f", {}))
+        else:
+            predictor = PredictorMLP(body=body, **config.get("f", {}))
         return predictor

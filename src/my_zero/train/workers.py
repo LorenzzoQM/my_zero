@@ -73,7 +73,12 @@ def _worker_self_play_one_episode(
 
     if isinstance(_WORKER_ENV.action_space, gym.spaces.Dict):
         key_0 = list(_WORKER_ENV.action_space.keys())[0]
-        n_actions = _WORKER_ENV.action_space[key_0].n
+        if isinstance(_WORKER_ENV.action_space[key_0], gym.spaces.Discrete):
+            n_actions = _WORKER_ENV.action_space[key_0].n
+        else:
+            n_actions = _WORKER_ENV.action_space[key_0].shape[0]
+    elif isinstance(_WORKER_ENV.action_space, gym.spaces.Box):
+        n_actions = _WORKER_ENV.action_space.shape[0]
     else:
         n_actions = _WORKER_ENV.action_space.n
 
