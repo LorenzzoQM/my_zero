@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from typing import Union
 from torch.distributions import Categorical, Normal
+import numpy as np
 
 
 def scale_value_function(x, eps=0.001):

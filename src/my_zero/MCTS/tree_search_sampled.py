@@ -222,30 +222,33 @@ class MuZeroSampledMCTS:
     def _select_child_batch(self, parent: Node):
 
         children = parent.children
-        parent_action_values = []
-        parent_visit_count = parent.visit_count
-        parent_action_counts = []
-        child_priors = []
-        actions = []
-        child_list = []
-        for action, child in children.items():
-            parent_action_values.append(parent.action_values.get(action, 0.0))
-            parent_action_counts.append(parent.action_counts.get(action, 0))
-            child_priors.append(child.prior)
-            actions.append(action)
-            child_list.append(child)
+        actions = list(children)
+
+        av = parent.action_values
+        ac = parent.action_counts
+
+        Q_sa = np.fromiter(
+            (av.get(a, 0.0) for a in actions), dtype=np.float32, count=len(actions)
+        )
+        N_sa = np.fromiter(
+            (ac.get(a, 0) for a in actions), dtype=np.float32, count=len(actions)
+        )
+        P_sa = np.fromiter(
+            (children[a].prior for a in actions), dtype=np.float32, count=len(actions)
+        )
 
         scores = puct_mu_zero_batch(
-            np.array(parent_action_values),
-            np.array(child_priors),
-            parent_visit_count,
-            np.array(parent_action_counts),
+            Q_sa,
+            P_sa,
+            parent.visit_count,
+            N_sa,
             self.q_min,
             self.q_max,
         )
 
-        best_index = np.argmax(scores)
-        return actions[best_index], child_list[best_index]
+        best_idx = int(np.argmax(scores))
+        best_action = actions[best_idx]
+        return best_action, children[best_action]
 
     @torch.no_grad()
     def _expand(
