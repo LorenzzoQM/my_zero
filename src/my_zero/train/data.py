@@ -13,7 +13,7 @@ class Episode:
     actions: Union[np.ndarray, List[Any]]
     actions_sampled: Optional[
         Union[np.ndarray, List[Any], dict[str, Union[np.ndarray, List[Any]]]]
-    ] = None
+    ]
     rewards: Union[np.ndarray, List[Any], dict[str, Union[np.ndarray, List[Any]]]]
     terminated: Union[np.ndarray, List[Any]]
     truncated: Union[np.ndarray, List[Any]]
@@ -86,6 +86,12 @@ def self_play_episode(
         }
 
     t = 0
+
+    log_action_info = {
+        "entropy_MCTS": [] if not _multi_agent else {agent: [] for agent in agents},
+        "STD_sampled": [] if not _multi_agent else {agent: [] for agent in agents},
+    }
+
     while not done and t < max_steps:
         # legal actions mask (Gym usually has all legal; keep hook for later)
         num_actions = mcts.num_actions
@@ -96,11 +102,16 @@ def self_play_episode(
         if not _multi_agent:
             obs_t = (
                 torch.as_tensor(obs, dtype=torch.float32, device=device)
-                .unsqueeze(0)
+                # .unsqueeze(0)
                 .to(device)
             )  # (1, obs_dim)
             actions_sampled = None
             with torch.no_grad():
+                # print("obs_t:", obs_t)
+                if obs_t.dim() == 1:
+                    obs_t = obs_t.unsqueeze(0)  # (1, obs_dim)
+                else:
+                    obs_t = obs_t.view(1, -1)
                 root_latent = net.h(obs_t).squeeze(0)  # (latent_dim,)
 
                 # MCTS
@@ -114,6 +125,24 @@ def self_play_episode(
             action, pi_target = mcts.select_action_from_visits(
                 visit_counts, temperature=temperature, return_pi=True
             )
+
+            if not _multi_agent:
+                log_action_info["entropy_MCTS"].append(
+                    mcts._compute_entropy(visit_counts)
+                )
+                if isinstance(visit_counts, dict) and "actions" in visit_counts:
+                    actions_sampled = visit_counts["actions"]
+                    log_action_info["STD_sampled"].append(np.std(actions_sampled))
+            else:
+                log_action_info["entropy_MCTS"][agent].append(
+                    mcts._compute_entropy(visit_counts)
+                )
+                if isinstance(visit_counts, dict) and "actions" in visit_counts:
+                    actions_sampled = visit_counts["actions"]
+                    log_action_info["STD_sampled"][agent].append(
+                        np.std(actions_sampled)
+                    )
+
             if isinstance(visit_counts, dict):
                 actions_sampled = visit_counts["actions"]
         else:
@@ -156,6 +185,9 @@ def self_play_episode(
             action_copy = action.copy()
         else:
             action_copy = action
+
+        # print(f"Step {t}: action={action_copy}, legal_mask={legal_mask}")
+        # print(f"Actions sampled: {actions_sampled_dict if _multi_agent else actions_sampled}")
         next_obs, reward, terminated, truncated, _ = env.step(action_copy)
         if _multi_agent:
             done = any(terminated.values()) or any(truncated.values())
@@ -239,6 +271,8 @@ def self_play_episode(
         env_callback_data = env_callback(env)
     else:
         env_callback_data = {}
+
+    env_callback_data.update(log_action_info)
 
     if _multi_agent:
         return episode_dict, env_callback_data

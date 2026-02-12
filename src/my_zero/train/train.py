@@ -194,14 +194,6 @@ def train_step(
             )
         action_seqs.append(acts)
 
-        if len(ep["actions_sampled"]) > 0:
-            for k in range(K):
-                t = t0 + k
-                if t < len(ep["actions_sampled"]):
-                    actions_sampled_list.append(ep["actions_sampled"][t])
-                else:
-                    actions_sampled_list.append(None)
-
         pis, rs, vs = make_targets(ep, t0, K=K, n_step=n_step, gamma=gamma)
         target_pis_list.append(pis)  # (K+1, A)
         target_rs_list.append(rs)  # (K+1,)
@@ -216,6 +208,18 @@ def train_step(
             else:
                 masks.append(ep["legal_masks"][0])
         legal_masks_list.append(masks)
+
+    if len(ep["actions_sampled"]) > 0:
+        for ep, t0 in batch:
+            actions_sampled_list_i = []
+            for k in range(K + 1):
+                t = t0 + k
+                actions_sampled_list_i.append(
+                    ep["actions_sampled"][t]
+                    if t < len(ep["actions_sampled"])
+                    else [np.array([0]) for _ in range(len(ep["actions_sampled"][0]))]
+                )
+            actions_sampled_list.append(actions_sampled_list_i)
 
     obs0 = torch.as_tensor(
         np.array(obs0_list), dtype=torch.float32, device=device
@@ -380,10 +384,10 @@ class Trainer:
         self.temperature_scheduler_function = config.get(
             "temperature_function", lambda it: 1.0
         )
-        self.c_puct_scheduler_function = config.get("c_puct_function", lambda it: 1.5)
-        self.dirichlet_eps_scheduler_function = config.get(
-            "dirichlet_eps_function", lambda it: 0.25
-        )
+        # self.c_puct_scheduler_function = config.get("c_puct_function", lambda it: 1.5)
+        # self.dirichlet_eps_scheduler_function = config.get(
+        #     "dirichlet_eps_function", lambda it: 0.25
+        # )
 
         self.eval_frequency = config.get("eval_frequency", 10)
         self.checkpoint_frquency = config.get("checkpoint_frequency", 20)
@@ -405,6 +409,8 @@ class Trainer:
 
         self.tensorboard_logging = config.get("tensorboard_logging", True)
         self.env_callback = config.get("env_callback", None)
+
+        self.mcts_self_play_schedule = config.get("MCTS_self_play_schedule", None)
 
     def _setup_logger(self):
         logger = logging.getLogger("my_zero")
@@ -440,11 +446,6 @@ class Trainer:
     def run_self_play_executor(self, replay, it):
         base = self.net._orig_mod if hasattr(self.net, "_orig_mod") else self.net
         net_state = {k: v.detach().cpu() for k, v in base.state_dict().items()}
-
-        self.mcts_config_self_play["dirichlet_eps"] = (
-            self.dirichlet_eps_scheduler_function(it)
-        )
-        self.mcts_config_self_play["c_puct"] = self.c_puct_scheduler_function(it)
 
         temp = self.temperature_scheduler_function(it)
 
@@ -553,12 +554,21 @@ class Trainer:
 
         stats_callbacks_summary = {}
         for key, values in stats_callbacks.items():
-            stats_callbacks_summary[f"{key}_mean"] = np.mean(values).item()
-            stats_callbacks_summary[f"{key}_std"] = np.std(values).item()
-            stats_callbacks_summary[f"{key}_min"] = np.min(values).item()
-            stats_callbacks_summary[f"{key}_max"] = np.max(values).item()
+            v_arr = np.asanyarray(values)
+
+            if v_arr.size > 0:
+                stats_callbacks_summary[f"{key}_mean"] = np.mean(v_arr).item()
+                stats_callbacks_summary[f"{key}_std"] = np.std(v_arr).item()
+                stats_callbacks_summary[f"{key}_min"] = np.min(v_arr).item()
+                stats_callbacks_summary[f"{key}_max"] = np.max(v_arr).item()
         del stats_callbacks
         return stats_callbacks_summary
+
+    def _update_params(self, it):
+        if self.mcts_self_play_schedule is not None:
+            for param, schedule in self.mcts_self_play_schedule.items():
+                if param in self.mcts_config_self_play:
+                    self.mcts_config_self_play[param] = schedule(it)
 
     def train(self):
         output_log = []
@@ -584,6 +594,8 @@ class Trainer:
 
         for it in range(1, self.n_iterations):
             time_start = time.time()
+
+            self._update_params(it)
 
             self.net.eval()
             if self.num_workers > 1:
@@ -778,9 +790,11 @@ class Trainer:
                     if value is not None:
                         self._to_tensorboard(key, value, it)
                 for key, value in stats_callbacks.items():
-                    self.tb_writer.add_scalar(f"self_play/{key}", value, it)
+                    if value is not None:
+                        self._to_tensorboard(f"self_play/{key}", value, it)
                 for key, value in stats_callbacks_eval.items():
-                    self.tb_writer.add_scalar(f"eval/{key}", value, it)
+                    if value is not None:
+                        self._to_tensorboard(f"eval/{key}", value, it)
 
             if it % self.checkpoint_frquency == 0:
                 logger.info("Saving checkpoint.", extra={"iteration": it})

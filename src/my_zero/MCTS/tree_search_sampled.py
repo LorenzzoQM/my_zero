@@ -74,10 +74,10 @@ class MuZeroSampledMCTS:
         num_sampled_actions: int,
         discount: float = 0.997,
         c_puct: float = 1.5,
-        dirichlet_alpha: float = 0.3,
-        dirichlet_eps: float = 0.25,
+        beta_temp: float = 1.5,
         device: str = "cpu",
         puct_opt: str = "puct",
+        num_sampled_actions_root: int | None = None,
     ):
         self.f = prediction_net
         self.g = dynamics_net
@@ -85,13 +85,17 @@ class MuZeroSampledMCTS:
         self.num_sampled_actions = num_sampled_actions
         self.discount = discount
         self.c_puct = c_puct
-        self.dirichlet_alpha = dirichlet_alpha
-        self.dirichlet_eps = dirichlet_eps
         self.device = device
+        self.beta_temp = beta_temp
         self.puct_opt = puct_opt
 
         self.q_min = np.inf
         self.q_max = -np.inf
+
+        if num_sampled_actions_root is None:
+            self.num_sampled_actions_root = num_sampled_actions * 2
+        else:
+            self.num_sampled_actions_root = num_sampled_actions_root
 
     @torch.no_grad()
     def run(
@@ -100,7 +104,6 @@ class MuZeroSampledMCTS:
         legal_actions: Optional[np.ndarray] = None,  # bool mask shape (num_actions,)
         num_simulations: int = 50,
         add_root_noise: bool = True,
-        beta_temp: float = 1.0,
     ):
         # Root node
         root = Node(
@@ -117,7 +120,8 @@ class MuZeroSampledMCTS:
             root,
             legal_actions=legal_actions,
             add_noise=add_root_noise,
-            beta_temp=beta_temp,
+            beta_temp=self.beta_temp,
+            num_sampled_actions_node=self.num_sampled_actions_root,
         )
 
         for _ in range(num_simulations):
@@ -148,21 +152,24 @@ class MuZeroSampledMCTS:
             # 2) Expansion + evaluation at leaf
             # actions_taken.append(None)
             leaf_value = self._expand(
-                node, legal_actions=None, add_noise=False, beta_temp=1.0
+                node, legal_actions=None, add_noise=False, beta_temp=self.beta_temp
             )
 
             # 3) Backpropagate
             self._backpropagate(search_path, leaf_value, actions_taken)
 
         # Return visit counts (policy target) and root value estimate
-        visit_counts = np.zeros(self.num_sampled_actions, dtype=np.int32)
+        visit_counts = np.zeros(self.num_sampled_actions_root, dtype=np.int32)
         for a, child in root.children.items():
             visit_counts[a] = child.visit_count
 
         return (
             {
                 "visit_counts": visit_counts,
-                "actions": [child.action for child in root.children.values()],
+                "actions": [
+                    child.action.squeeze(0).cpu().numpy()
+                    for child in root.children.values()
+                ],
             },
             root.value(),
             root_value,
@@ -197,6 +204,7 @@ class MuZeroSampledMCTS:
         legal_actions: Optional[np.ndarray],
         add_noise: bool,
         beta_temp: float,
+        num_sampled_actions_node: Optional[int] = None,
     ):
         """
         Expands node using f(node.latent) to create priors, and sets children.
@@ -215,7 +223,11 @@ class MuZeroSampledMCTS:
         # Create children
         priors_beta = []
         actions_list = []
-        for i in range(self.num_sampled_actions):
+        if num_sampled_actions_node is not None:
+            num_sampled_actions = num_sampled_actions_node
+        else:
+            num_sampled_actions = self.num_sampled_actions
+        for i in range(num_sampled_actions):
             action_i, priors_i = self.f.sample_action(policy_logits)
             priors_beta.append(priors_i)
             actions_list.append(action_i)
@@ -225,17 +237,8 @@ class MuZeroSampledMCTS:
         priors_beta = priors_beta ** (1.0 / beta_temp)
         priors_beta = priors_beta / (priors_beta.sum() + 1e-8)
 
-        # logps = np.array(logps, dtype=np.float32)
-        # priors = np.exp(logps / beta_temp)
-        # priors = priors / (priors.sum() + 1e-8)
-
-        for i in range(self.num_sampled_actions):
+        for i in range(num_sampled_actions):
             node.children[i] = Node(prior=float(priors_beta[i]), action=actions_list[i])
-
-        # IMPORTANT: in MuZero, children latents are created *lazily* when traversed (via dynamics).
-        # We'll do that in backprop step by setting leaf latents when selected.
-        # But we still need dynamics latents during selection → simplest is: compute when stepping down.
-        # We'll handle that by computing latent when a child is first visited during selection.
         return value
 
     def _backpropagate(self, search_path, leaf_value: float, actions_taken):
@@ -300,5 +303,14 @@ class MuZeroSampledMCTS:
             action = int(np.random.choice(len(pi_target), p=pi_target))
 
         if return_pi:
-            return actions[action].squeeze(0).cpu().numpy(), pi_target
-        return actions[action].squeeze(0).cpu().numpy()
+            return actions[action], pi_target
+        return actions[action]
+
+    def _compute_entropy(self, visit_counts_dict: dict) -> float:
+        visit_counts = visit_counts_dict["visit_counts"]
+        total_visits = np.sum(visit_counts)
+        if total_visits == 0:
+            return 0.0
+        probs = visit_counts / total_visits
+        entropy = -np.sum(probs * np.log(probs + 1e-8))
+        return entropy
