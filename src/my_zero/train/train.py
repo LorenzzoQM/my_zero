@@ -826,7 +826,16 @@ class Trainer:
                         it,
                     )
 
+        self.close()
+
         return output_log
+
+    def close(self):
+        p = getattr(self, "_self_play_pool", None)
+        if p is not None:
+            logger.debug("Shutting down self-play pool...")
+            p.shutdown(wait=True, cancel_futures=True)
+            self._self_play_pool = None
 
     def _to_tensorboard(self, key, value, it):
         if isinstance(value, dict):
