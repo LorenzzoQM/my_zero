@@ -368,6 +368,10 @@ class Trainer:
         self.self_play_episodes_per_iteration = config.get(
             "self_play_episodes_per_iteration", 4
         )
+        self.training_time_limit_seconds = config.get(
+            "training_time_limit_seconds", None
+        )
+        self.training_start_time = None
         self.replay_capacity_episodes = config.get("replay_capacity_episodes", 5000)
         self.min_replay_episodes_for_training = config.get(
             "min_replay_episodes_for_training", 10
@@ -584,6 +588,7 @@ class Trainer:
     def train(self):
         output_log = []
         self._start_log()
+        self.training_start_time = time.time()
 
         if self.prioritized_replay:
             replay = PrioritizedReplayBuffer(
@@ -604,6 +609,19 @@ class Trainer:
             scheduler = scheduler_class(optimizer, **self.lr_scheduler_params)
 
         for it in range(1, self.n_iterations):
+
+            if (
+                self.training_time_limit_seconds is not None
+                and time.time() - self.training_start_time
+                > self.training_time_limit_seconds
+            ):
+                logger.info(
+                    f"Training time limit of {self.training_time_limit_seconds} seconds reached. Stopping training.",
+                    extra={"iteration": it},
+                )
+                self.training_start_time = None
+                break
+
             time_start = time.time()
 
             self._update_params(it)
