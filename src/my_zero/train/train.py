@@ -353,7 +353,7 @@ class Trainer:
         self.device = device
         self.net_config = net_config
         self._set_config(config)
-        self._seed = 1234
+        self._seed = np.random.randint(0, 1000000)
         self.env_args = env_args
         self.eval_env_args = eval_env_args if eval_env_args is not None else env_args
 
@@ -395,10 +395,6 @@ class Trainer:
         self.temperature_scheduler_function = config.get(
             "temperature_function", lambda it: 1.0
         )
-        # self.c_puct_scheduler_function = config.get("c_puct_function", lambda it: 1.5)
-        # self.dirichlet_eps_scheduler_function = config.get(
-        #     "dirichlet_eps_function", lambda it: 0.25
-        # )
 
         self.eval_frequency = config.get("eval_frequency", 10)
         self.checkpoint_frquency = config.get("checkpoint_frequency", 20)
