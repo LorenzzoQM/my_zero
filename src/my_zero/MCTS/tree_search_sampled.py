@@ -11,6 +11,7 @@ from typing import Any
 class Node:
     prior: float
     action: Any
+    sigmas: tuple = field(default_factory=tuple)
     reward: float = 0.0  # reward from parent -> this node
     visit_count: int = 0
     value_sum: float = 0.0
@@ -101,6 +102,7 @@ class MuZeroSampledMCTS:
         device: str = "cpu",
         puct_opt: str = "puct",
         num_sampled_actions_root: int | None = None,
+        sample_from_uniform: int = 4,
     ):
         self.f = prediction_net
         self.g = dynamics_net
@@ -111,6 +113,11 @@ class MuZeroSampledMCTS:
         self.device = device
         self.beta_temp = beta_temp
         self.puct_opt = puct_opt
+        self.sample_from_uniform = sample_from_uniform
+        assert (
+            self.sample_from_uniform < self.num_sampled_actions
+        ), "sample_from_uniform must be less than num_sampled_actions"
+        assert self.sample_from_uniform >= 0, "sample_from_uniform must be non-negative"
 
         self.q_min = np.inf
         self.q_max = -np.inf
@@ -196,6 +203,10 @@ class MuZeroSampledMCTS:
             },
             root.value(),
             root_value,
+            {
+                "sigmas": [root.sigmas[0] for child in root.children.values()],
+                "log_sigmas": [root.sigmas[1] for child in root.children.values()],
+            },
         )
 
     # Slow for larger action spaces
@@ -274,20 +285,30 @@ class MuZeroSampledMCTS:
         value = float(value.squeeze().item())
 
         # Create children
-        priors_beta = []
-        actions_list = []
         if num_sampled_actions_node is not None:
             num_sampled_actions = num_sampled_actions_node
         else:
             num_sampled_actions = self.num_sampled_actions
-        # for i in range(num_sampled_actions):
-        #     action_i, priors_i = self.f.sample_action(policy_logits)
-        #     priors_beta.append(priors_i)
-        #     actions_list.append(action_i)
 
-        actions_list, priors_beta = self.f.sample_action(
-            policy_logits, n_samples=num_sampled_actions, return_prob=True
+        n_from_policy = num_sampled_actions - self.sample_from_uniform
+        n_from_uniform = num_sampled_actions - n_from_policy
+
+        actions_list, priors_beta, sigmas = self.f.sample_action(
+            policy_logits, n_samples=n_from_policy, return_prob=True
         )
+
+        if n_from_uniform > 0:
+            uniform_dist = torch.distributions.Uniform(low=-2, high=2)
+            uniform_actions = uniform_dist.sample((n_from_uniform, 1, 1)).to(
+                self.device
+            )
+            uniform_priors = (
+                torch.ones((n_from_uniform, 1), device=self.device) / n_from_uniform
+            )
+            actions_list = torch.cat([actions_list, uniform_actions], dim=0)
+            priors_beta = torch.cat([priors_beta, uniform_priors], dim=0)
+
+        node.sigmas = sigmas
 
         node.children = {}
         priors_beta = np.array(priors_beta)

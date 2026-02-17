@@ -168,7 +168,7 @@ class MuZeroMCTS:
         for a, child in root.children.items():
             visit_counts[a] = child.visit_count
 
-        return visit_counts, root.value(), root_value
+        return visit_counts, root.value(), root_value, {}
 
     def _select_child(self, parent: Node):
         best_action, best_child, best_score = None, None, -1e18

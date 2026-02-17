@@ -4,6 +4,10 @@ import torch.nn as nn
 from typing import Union
 from torch.distributions import Categorical, Normal
 import numpy as np
+import math
+
+LOG_STD_MIN = math.log(0.1)
+LOG_STD_MAX = math.log(1.0)
 
 
 def scale_value_function(x, eps=0.001):
@@ -228,10 +232,7 @@ class PredictorMLP(nn.Module):
                 support_to_scalar(probs, self.support)
             )
 
-    def sample_action(
-        self,
-        logits: torch.Tensor,
-    ) -> torch.Tensor:
+    def sample_action(self, logits: torch.Tensor) -> torch.Tensor:
         policy_dist = Categorical(logits=logits)
         action = policy_dist.sample()
         return action
@@ -263,6 +264,7 @@ class PredictorMLPCont(PredictorMLP):
         support: torch.Tensor = None,
         scale_value: bool = False,
         lims: tuple[float, float] = (-1.0, 1.0),
+        squashed_actions: bool = False,
     ):
 
         super().__init__(
@@ -274,13 +276,12 @@ class PredictorMLPCont(PredictorMLP):
         )
         self.policy_head = nn.Linear(self.body.output_dim, num_actions * 2)
         self.lims = lims
+        self.squashed_actions = squashed_actions
 
-    def sample_action(
+    def sample_action_squashed(
         self, logits: torch.Tensor, n_samples: int = 1, return_prob=True
     ) -> torch.Tensor:
-        # mu, log_sigma = torch.chunk(
-        #     torch.tensor(logits, dtype=torch.float32), 2, dim=-1
-        # )
+
         if isinstance(logits, np.ndarray):
             logits = torch.tensor(logits, dtype=torch.float32, device=logits.device)
         mu, log_sigma = torch.chunk(logits, 2, dim=-1)
@@ -302,13 +303,13 @@ class PredictorMLPCont(PredictorMLP):
             return a_scaled
 
         logp = dist.log_prob(z).sum(-1) - torch.log(1 - a.pow(2) + 1e-6).sum(-1)
-        logp -= torch.log((high - low) * 0.5)
+        logp -= torch.log((high - low) * 0.5).sum(dim=-1)
 
-        return a_scaled, torch.exp(logp)
+        return a_scaled, torch.exp(logp), (sigma, log_sigma)
 
-    def logp(self, logits: torch.Tensor, action: torch.Tensor):
+    def logp_squashed(self, logits: torch.Tensor, action: torch.Tensor):
         mu, log_std = torch.chunk(logits, 2, dim=-1)
-        log_std = log_std.clamp(-5, 2)
+        log_std = log_std.clamp(-1, 2)
         std = log_std.exp()
 
         # 1. unscale action back to [-1, 1]
@@ -329,11 +330,11 @@ class PredictorMLPCont(PredictorMLP):
         logp -= torch.log(1 - a.pow(2) + 1e-6).sum(dim=-1)
 
         # 5. scale correction
-        logp -= torch.log((high - low) * 0.5)
+        logp -= torch.log((high - low) * 0.5).sum(dim=-1)
 
         return logp
 
-    def cross_entropy_loss(self, logits, actions, pi_target):
+    def cross_entropy_loss_squashed(self, logits, actions, pi_target):
         # logits: (B, 2*act_dim)
         B, M, act_dim = actions.shape
 
@@ -343,11 +344,81 @@ class PredictorMLPCont(PredictorMLP):
         )  # (B, M, 2*act_dim)
 
         # logp for each sampled action
-        logp = self.logp(logits_exp, actions)  # (B, M)
+        logp = self.logp_squashed(logits_exp, actions)  # (B, M)
 
         # Cross-entropy with soft targets
         loss = -(pi_target * logp).sum(dim=1)  # (B,)
         return loss
+
+    def sample_action_diag(self, logits, n_samples=1, return_prob=True):
+
+        if isinstance(logits, np.ndarray):
+            logits = torch.as_tensor(logits, dtype=torch.float32)
+
+        mu, log_std = torch.chunk(logits, 2, dim=-1)
+        log_std = log_std.clamp(LOG_STD_MIN, LOG_STD_MAX)
+        std = log_std.exp()
+
+        device = logits.device
+        dtype = logits.dtype
+
+        low_s, high_s = self.lims
+        low = torch.as_tensor(low_s, device=device, dtype=dtype)
+        high = torch.as_tensor(high_s, device=device, dtype=dtype)
+
+        base_dist = Normal(mu, std)
+
+        # for _ in range(n_samples):
+        a = base_dist.rsample(sample_shape=(n_samples,))
+        logp = base_dist.log_prob(a)
+
+        a = torch.clamp(a, low, high)
+
+        if not return_prob:
+            return a
+
+        logp = logp.sum(dim=-1)
+        return a, torch.exp(logp), (std, log_std)
+
+    def logp_diag(self, logits, action):
+
+        if isinstance(logits, np.ndarray):
+            logits = torch.as_tensor(logits, dtype=torch.float32)
+
+        mu, log_std = torch.chunk(logits, 2, dim=-1)
+        log_std = log_std.clamp(LOG_STD_MIN, LOG_STD_MAX)
+        std = log_std.exp()
+
+        mu = mu.unsqueeze(1)
+        std = std.unsqueeze(1)
+
+        base_dist = Normal(mu, std)
+
+        return base_dist.log_prob(action).sum(dim=-1)
+
+    def cross_entropy_loss_diag(self, logits, actions, pi_target):
+
+        logp = self.logp_diag(logits, actions)
+        loss = -(pi_target * logp).sum(dim=1)
+        return loss
+
+    def sample_action(self, logits: torch.Tensor, n_samples: int = 1, return_prob=True):
+        if self.squashed_actions:
+            return self.sample_action_squashed(logits, n_samples, return_prob)
+        else:
+            return self.sample_action_diag(logits, n_samples, return_prob)
+
+    def logp(self, logits: torch.Tensor, action: torch.Tensor):
+        if self.squashed_actions:
+            return self.logp_squashed(logits, action)
+        else:
+            return self.logp_diag(logits, action)
+
+    def cross_entropy_loss(self, logits, actions, pi_target):
+        if self.squashed_actions:
+            return self.cross_entropy_loss_squashed(logits, actions, pi_target)
+        else:
+            return self.cross_entropy_loss_diag(logits, actions, pi_target)
 
 
 class MuZeroNet(nn.Module):

@@ -115,7 +115,7 @@ def self_play_episode(
                 root_latent = net.h(obs_t).squeeze(0)  # (latent_dim,)
 
                 # MCTS
-                visit_counts, root_v_est, _ = mcts.run(
+                visit_counts, root_v_est, _, sigmas = mcts.run(
                     root_latent=root_latent,
                     legal_actions=legal_mask,
                     num_simulations=mcts_num_simulations,
@@ -133,6 +133,10 @@ def self_play_episode(
                 if isinstance(visit_counts, dict) and "actions" in visit_counts:
                     actions_sampled = visit_counts["actions"]
                     log_action_info["STD_sampled"].append(np.std(actions_sampled))
+                    for key, value in sigmas.items():
+                        if key not in log_action_info:
+                            log_action_info[key] = []
+                        log_action_info[key].append(value)
             else:
                 log_action_info["entropy_MCTS"][agent].append(
                     mcts._compute_entropy(visit_counts)
@@ -142,6 +146,10 @@ def self_play_episode(
                     log_action_info["STD_sampled"][agent].append(
                         np.std(actions_sampled)
                     )
+                    for key, value in sigmas.items():
+                        if key not in log_action_info:
+                            log_action_info[key] = []
+                        log_action_info[key][agent].append(value)
 
             if isinstance(visit_counts, dict):
                 actions_sampled = visit_counts["actions"]
@@ -163,7 +171,7 @@ def self_play_episode(
                     root_latent = net.h(obs_agents[agent]).squeeze(0)  # (latent_dim,)
 
                     # MCTS
-                    visit_counts_a, root_v_est_a, _ = mcts.run(
+                    visit_counts_a, root_v_est_a, _, sigmas = mcts.run(
                         root_latent=root_latent,
                         legal_actions=legal_mask,
                         num_simulations=mcts_num_simulations,
@@ -235,7 +243,7 @@ def self_play_episode(
                 with torch.no_grad():
                     root_latent = net.h(obs_t).squeeze(0)  # (latent_dim,)
 
-                    _, root_v_est, _ = mcts.run(
+                    _, root_v_est, _, sigmas = mcts.run(
                         root_latent=root_latent,
                         legal_actions=legal_mask,
                         num_simulations=mcts_num_simulations,
@@ -259,7 +267,7 @@ def self_play_episode(
                             0
                         )  # (latent_dim,)
 
-                        _, root_v_est_a, _ = mcts.run(
+                        _, root_v_est_a, _, sigmas = mcts.run(
                             root_latent=root_latent,
                             legal_actions=legal_mask,
                             num_simulations=mcts_num_simulations,
