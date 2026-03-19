@@ -61,6 +61,7 @@ def _worker_self_play_one_episode(
     mcts_num_simulations,
     mcts_config_self_play,
     seed,
+    add_root_noise=True,
 ):
     global _WORKER_ENV, _WORKER_NET, _WORKER_DEVICE, _ENV_CALLBACK, _AGENTS_EMBEDDING
 
@@ -99,5 +100,6 @@ def _worker_self_play_one_episode(
         seed=seed,
         device=_WORKER_DEVICE,
         agents_embedding=_AGENTS_EMBEDDING,
+        add_root_noise=add_root_noise,
     )
     return episode, env_callback_data

@@ -60,6 +60,7 @@ def _worker_self_play(args):
         mcts_config,
         seed,
         agents_embedding,
+        add_root_noise,
     ) = args
 
     # Create env inside worker
@@ -96,6 +97,7 @@ def _worker_self_play(args):
         mcts_num_simulations=mcts_num_simulations,
         seed=seed,
         agents_embedding=agents_embedding,
+        add_root_noise=add_root_noise,
     )
 
     env.close()
@@ -233,14 +235,18 @@ def train_step(
                 )
             actions_sampled_list.append(actions_sampled_list_i)
 
+    action_dtype = (
+        torch.float32 if getattr(net, "continuous_actions", False) else torch.long
+    )
+
     obs0 = torch.as_tensor(
         np.array(obs0_list), dtype=torch.float32, device=device
     )  # (B, obs_dim)
     actions = torch.as_tensor(
-        np.array(action_seqs), dtype=torch.long, device=device
+        np.array(action_seqs), dtype=action_dtype, device=device
     )  # (B, K)
     actions_sampled = torch.as_tensor(
-        np.array(actions_sampled_list), dtype=torch.long, device=device
+        np.array(actions_sampled_list), dtype=action_dtype, device=device
     )  # (B, K)
     target_pis = torch.as_tensor(
         np.array(target_pis_list), dtype=torch.float32, device=device
@@ -421,19 +427,31 @@ class Trainer:
 
         self.tensorboard_logging = config.get("tensorboard_logging", True)
         self.env_callback = config.get("env_callback", None)
+        self.eval_temperature = config.get("eval_temperature", 1e-8)
+        self.eval_add_root_noise = config.get("eval_add_root_noise", False)
 
         self.mcts_self_play_schedule = config.get("MCTS_self_play_schedule", None)
 
     def _setup_logger(self):
         logger = logging.getLogger("my_zero")
         logger.setLevel(self.logger_level)
-        ch = logging.StreamHandler()
-        ch.setFormatter(SimFormatter())
-        logger.addHandler(ch)
+        ch = None
+        for handler in logger.handlers:
+            if getattr(handler, "_my_zero_stream_handler", False):
+                ch = handler
+                break
+
+        if ch is None:
+            ch = logging.StreamHandler()
+            ch.setFormatter(SimFormatter())
+            ch._my_zero_stream_handler = True
+            logger.addHandler(ch)
+
+        self._log_stream_handler = ch
         q = mp.Queue()
         self.logger_queue = q
-        listener = logging.handlers.QueueListener(self.logger_queue, ch)
-        listener.start()
+        self._log_listener = logging.handlers.QueueListener(self.logger_queue, ch)
+        self._log_listener.start()
 
     def _get_self_play_pool(self):
         if getattr(self, "_self_play_pool", None) is None:
@@ -474,6 +492,7 @@ class Trainer:
                     self.mcts_num_simulations,
                     self.mcts_config_self_play,
                     self._seed + i,
+                    True,
                 )
             )
         self._seed += self.self_play_episodes_per_iteration
@@ -655,6 +674,7 @@ class Trainer:
                             self.mcts_config_self_play,
                             self._seed + i,
                             self.agents_embedding,
+                            True,
                         )
                     )
                     if isinstance(ep, dict):
@@ -771,12 +791,13 @@ class Trainer:
                             self.env_callback,
                             self.net_config,
                             net_state,
-                            self.temperature_scheduler_function(it),
+                            self.eval_temperature,
                             self.mcts_class,
                             self.mcts_num_simulations,
                             self.mcts_config_self_play,
                             self._seed + i,
                             self.agents_embedding,
+                            self.eval_add_root_noise,
                         )
                     )
                     if isinstance(ep, dict):
@@ -855,6 +876,16 @@ class Trainer:
             logger.debug("Shutting down self-play pool...")
             p.shutdown(wait=True, cancel_futures=True)
             self._self_play_pool = None
+
+        listener = getattr(self, "_log_listener", None)
+        if listener is not None:
+            listener.stop()
+            self._log_listener = None
+
+        tb_writer = getattr(self, "tb_writer", None)
+        if tb_writer is not None:
+            tb_writer.close()
+            self.tb_writer = None
 
     def _to_tensorboard(self, key, value, it):
         if isinstance(value, dict):

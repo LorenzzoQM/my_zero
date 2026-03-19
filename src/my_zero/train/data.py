@@ -38,6 +38,7 @@ def self_play_episode(
     mcts_num_simulations=50,
     seed=None,
     agents_embedding: Union[None, dict[str, np.ndarray]] = None,
+    add_root_noise: bool = True,
 ) -> Tuple[Episode, Optional[Any]]:
     """
     net should expose:
@@ -119,7 +120,7 @@ def self_play_episode(
                     root_latent=root_latent,
                     legal_actions=legal_mask,
                     num_simulations=mcts_num_simulations,
-                    add_root_noise=True,
+                    add_root_noise=add_root_noise,
                 )
 
             action, pi_target = mcts.select_action_from_visits(
@@ -175,7 +176,7 @@ def self_play_episode(
                         root_latent=root_latent,
                         legal_actions=legal_mask,
                         num_simulations=mcts_num_simulations,
-                        add_root_noise=True,
+                        add_root_noise=add_root_noise,
                     )
 
                 action_a, pi_target_a = mcts.select_action_from_visits(
@@ -247,7 +248,7 @@ def self_play_episode(
                         root_latent=root_latent,
                         legal_actions=legal_mask,
                         num_simulations=mcts_num_simulations,
-                        add_root_noise=True,
+                        add_root_noise=add_root_noise,
                     )
                 episode["root_v_est"].append(float(root_v_est))
             else:
@@ -271,7 +272,7 @@ def self_play_episode(
                             root_latent=root_latent,
                             legal_actions=legal_mask,
                             num_simulations=mcts_num_simulations,
-                            add_root_noise=True,
+                            add_root_noise=add_root_noise,
                         )
                     episode_dict[agent]["root_v_est"].append(float(root_v_est_a))
 
