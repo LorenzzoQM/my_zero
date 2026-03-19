@@ -21,6 +21,13 @@ from itertools import chain
 logger = logging.getLogger(__name__)
 
 
+def _per_sample_mse(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    loss = F.mse_loss(pred, target, reduction="none")
+    if loss.dim() > 1:
+        loss = loss.view(loss.shape[0], -1).mean(dim=1)
+    return loss
+
+
 def save_checkpoint(path, net, optimizer, config, iteration):
     torch.save(
         {
@@ -294,7 +301,7 @@ def train_step(
             )
             value_loss = -(target_dist * F.log_softmax(v_pred, dim=-1)).sum(dim=-1)
         else:
-            value_loss = F.mse_loss(v_pred, target_vs[:, k])
+            value_loss = _per_sample_mse(v_pred, target_vs[:, k])
 
         total_policy_loss = total_policy_loss + policy_loss / (K + 1)
         total_value_loss = total_value_loss + value_loss / (K + 1)
@@ -311,7 +318,7 @@ def train_step(
                     dim=-1
                 )
             else:
-                reward_loss = F.mse_loss(r_pred, target_rs[:, k])
+                reward_loss = _per_sample_mse(r_pred, target_rs[:, k])
             total_reward_loss = total_reward_loss + reward_loss / K
             s = s_next
 
