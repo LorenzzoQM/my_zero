@@ -302,10 +302,15 @@ class MuZeroSampledMCTS:
         )
 
         if n_from_uniform > 0:
-            uniform_dist = torch.distributions.Uniform(low=-2, high=2)
-            uniform_actions = uniform_dist.sample((n_from_uniform, 1, 1)).to(
-                self.device
-            )
+            lims = getattr(self.f, "lims", (-1.0, 1.0))
+            low = torch.as_tensor(lims[0], device=self.device, dtype=torch.float32)
+            high = torch.as_tensor(lims[1], device=self.device, dtype=torch.float32)
+            if low.dim() == 0:
+                low = low.expand(self.num_actions)
+            if high.dim() == 0:
+                high = high.expand(self.num_actions)
+            uniform_dist = torch.distributions.Uniform(low=low, high=high)
+            uniform_actions = uniform_dist.sample((n_from_uniform, 1))
             uniform_priors = (
                 torch.ones((n_from_uniform, 1), device=self.device) / n_from_uniform
             )

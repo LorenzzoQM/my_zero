@@ -283,7 +283,7 @@ class PredictorMLPCont(PredictorMLP):
     ) -> torch.Tensor:
 
         if isinstance(logits, np.ndarray):
-            logits = torch.tensor(logits, dtype=torch.float32, device=logits.device)
+            logits = torch.as_tensor(logits, dtype=torch.float32)
         mu, log_sigma = torch.chunk(logits, 2, dim=-1)
 
         sigma = torch.exp(log_sigma).clamp(min=1e-3, max=1.0)
