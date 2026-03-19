@@ -114,6 +114,7 @@ class MuZeroSampledMCTS:
         self.beta_temp = beta_temp
         self.puct_opt = puct_opt
         self.sample_from_uniform = sample_from_uniform
+        self.batched_search = True
         assert (
             self.sample_from_uniform < self.num_sampled_actions
         ), "sample_from_uniform must be less than num_sampled_actions"
@@ -162,7 +163,10 @@ class MuZeroSampledMCTS:
             # 1) Selection: descend by PUCT until reaching an unexpanded node
             while node.expanded():
                 parent = node
-                action, node = self._select_child_batch(search_path[-1])
+                if self.batched_search:
+                    action, node = self._select_child_batch(search_path[-1])
+                else:
+                    action, node = self._select_child(search_path[-1])
 
                 # Lazily materialize child latent via dynamics the first time we traverse it
                 if node.latent is None:
