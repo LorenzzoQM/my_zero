@@ -188,6 +188,11 @@ def train_step(
 
         # actions for unroll (length K)
         acts = []
+        act_dim = (
+            ep["actions"][0].shape[0]
+            if isinstance(ep["actions"][0], np.ndarray)
+            else None
+        )
         for k in range(K):
             t = t0 + k
             acts.append(
@@ -196,7 +201,7 @@ def train_step(
                 else (
                     torch.tensor([0])
                     if isinstance(ep["actions"][0], torch.Tensor)
-                    else [0]
+                    else np.zeros(act_dim, dtype=np.int64) if act_dim is not None else 0
                 )
             )
         action_seqs.append(acts)
