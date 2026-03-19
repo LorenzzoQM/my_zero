@@ -518,10 +518,10 @@ class Trainer:
                     replay.add_episode(ep[agent_i])
                     if agent_i not in avg_length.keys():
                         avg_length[agent_i] = [len(ep[agent_i]["rewards"])]
-                        avg_reward[agent_i] = [ep[agent_i]["rewards"]]
+                        avg_reward[agent_i] = [sum(ep[agent_i]["rewards"])]
                     else:
                         avg_length[agent_i].append(len(ep[agent_i]["rewards"]))
-                        avg_reward[agent_i].append(ep[agent_i]["rewards"])
+                        avg_reward[agent_i].append(sum(ep[agent_i]["rewards"]))
             else:
                 replay.add_episode(ep)
                 avg_length += len(ep["rewards"])
@@ -695,7 +695,7 @@ class Trainer:
                                 avg_reward[agent_i].append(sum(ep[agent_i]["rewards"]))
                     else:
                         replay.add_episode(ep)
-                        env_callback_data_list.extend(env_callback_data)
+                        env_callback_data_list.append(env_callback_data)
                         avg_length += len(ep["rewards"])
                         avg_reward += sum(ep["rewards"])
 
