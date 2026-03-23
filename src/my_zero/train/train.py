@@ -238,7 +238,12 @@ def train_step(
                 actions_sampled_list_i.append(
                     ep["actions_sampled"][t]
                     if t < len(ep["actions_sampled"])
-                    else [np.array([0]) for _ in range(len(ep["actions_sampled"][0]))]
+                    else (
+                        [np.zeros(act_dim, dtype=np.float32)]
+                        * len(ep["actions_sampled"][0])
+                        if act_dim is not None
+                        else 0
+                    )
                 )
             actions_sampled_list.append(actions_sampled_list_i)
 
