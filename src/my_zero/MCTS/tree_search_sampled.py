@@ -171,8 +171,8 @@ class MuZeroSampledMCTS:
                 # Lazily materialize child latent via dynamics the first time we traverse it
                 if node.latent is None:
                     s_parent = parent.latent.unsqueeze(0)  # (1, latent_dim)
-                    a_t = torch.tensor(
-                        [node.action], device=self.device, dtype=torch.float32
+                    a_t = torch.as_tensor(
+                        node.action, device=self.device, dtype=torch.float32
                     )
                     s_next, r_pred = self.g(
                         s_parent, a_t
