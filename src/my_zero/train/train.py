@@ -576,6 +576,21 @@ class Trainer:
             f.write(json.dumps(out_log) + "\n")
 
     @staticmethod
+    def _flatten_dict(data):
+        flat_dict = {}
+
+        def _flatten(obj, parent_key=""):
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    new_key = f"{parent_key}.{k}" if parent_key else k
+                    _flatten(v, new_key)
+            else:
+                flat_dict[parent_key] = obj
+
+        _flatten(data)
+        return flat_dict
+
+    @staticmethod
     def _summarize_stats(env_callback_data_list):
         stats_callbacks = {}
         if len(env_callback_data_list) == 0:
@@ -585,10 +600,18 @@ class Trainer:
                 if not isinstance(data, dict):
                     continue
                 for key, value in data.items():
-                    if key not in stats_callbacks:
-                        stats_callbacks[key] = [value]
+                    if isinstance(value, dict):
+                        for sub_key, sub_value in value.items():
+                            full_key = f"{key}.{sub_key}"
+                            if full_key not in stats_callbacks:
+                                stats_callbacks[full_key] = [sub_value]
+                            else:
+                                stats_callbacks[full_key].append(sub_value)
                     else:
-                        stats_callbacks[key].append(value)
+                        if key not in stats_callbacks:
+                            stats_callbacks[key] = [value]
+                        else:
+                            stats_callbacks[key].append(value)
 
         stats_callbacks_summary = {}
         for key, values in stats_callbacks.items():
