@@ -399,10 +399,6 @@ class Trainer:
         self.min_replay_episodes_for_training = config.get(
             "min_replay_episodes_for_training", 10
         )
-        self.mcts_num_simulations = config.get("mcts_num_simulations", 50)
-        self.mcts_config_self_play = config.get(
-            "mcts_config_self_play", {"puct_opt": "muzero", "c_puct": 1.0}
-        )
         self.batch_size = config.get("batch_size", 64)
         self.K = config.get("K", 5)
         self.n_step = config.get("n_step", 5)
@@ -414,6 +410,12 @@ class Trainer:
         self.learning_rate = config.get("learning_rate", 1e-3)
         self.weight_decay = config.get("weight_decay", 1e-5)
         self.num_workers = config.get("num_workers", 1)
+
+        self.mcts_num_simulations = config.get("mcts_num_simulations", 50)
+        self.mcts_config_self_play = config.get(
+            "mcts_config_self_play",
+            {"puct_opt": "muzero", "c_puct": 1.0, "gamma": self.gamma},
+        )
 
         self.temperature_scheduler_function = config.get(
             "temperature_function", lambda it: 1.0

@@ -92,7 +92,7 @@ class MuZeroMCTS:
         prediction_net,  # f
         dynamics_net,  # g
         num_actions: int,
-        discount: float = 0.997,
+        gamma: float = 0.997,
         c_puct: float = 1.5,
         dirichlet_alpha: float = 0.3,
         dirichlet_eps: float = 0.25,
@@ -102,7 +102,7 @@ class MuZeroMCTS:
         self.f = prediction_net
         self.g = dynamics_net
         self.num_actions = num_actions
-        self.discount = discount
+        self.gamma = gamma
         self.c_puct = c_puct
         self.dirichlet_alpha = dirichlet_alpha
         self.dirichlet_eps = dirichlet_eps
@@ -279,7 +279,7 @@ class MuZeroMCTS:
             action = actions_taken[i - 1]  # action taken at parent to reach node
 
             q = (
-                node.reward + self.discount * v
+                node.reward + self.gamma * v
             )  # reward is stored on child node (edge parent->child)
 
             # # Update edge stats on the parent
