@@ -741,9 +741,9 @@ class Trainer:
                                 avg_reward[agent_i].append(sum(ep[agent_i]["rewards"]))
                     else:
                         replay.add_episode(ep)
-                        env_callback_data_list.append(env_callback_data)
                         avg_length += len(ep["rewards"])
                         avg_reward += sum(ep["rewards"])
+                    env_callback_data_list.append(env_callback_data)
 
                 self._seed += self.self_play_episodes_per_iteration
                 if self.agents_embedding is not None:

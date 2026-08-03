@@ -127,30 +127,16 @@ def self_play_episode(
                 visit_counts, temperature=temperature, return_pi=True
             )
 
-            if not _multi_agent:
-                log_action_info["entropy_MCTS"].append(
-                    mcts._compute_entropy(visit_counts)
-                )
-                if isinstance(visit_counts, dict) and "actions" in visit_counts:
-                    actions_sampled = visit_counts["actions"]
-                    log_action_info["STD_sampled"].append(np.std(actions_sampled))
-                    for key, value in sigmas.items():
-                        if key not in log_action_info:
-                            log_action_info[key] = []
-                        log_action_info[key].append(value)
-            else:
-                log_action_info["entropy_MCTS"][agent].append(
-                    mcts._compute_entropy(visit_counts)
-                )
-                if isinstance(visit_counts, dict) and "actions" in visit_counts:
-                    actions_sampled = visit_counts["actions"]
-                    log_action_info["STD_sampled"][agent].append(
-                        np.std(actions_sampled)
-                    )
-                    for key, value in sigmas.items():
-                        if key not in log_action_info:
-                            log_action_info[key] = []
-                        log_action_info[key][agent].append(value)
+            log_action_info["entropy_MCTS"].append(
+                mcts._compute_entropy(visit_counts)
+            )
+            if isinstance(visit_counts, dict) and "actions" in visit_counts:
+                actions_sampled = visit_counts["actions"]
+                log_action_info["STD_sampled"].append(np.std(actions_sampled))
+                for key, value in sigmas.items():
+                    if key not in log_action_info:
+                        log_action_info[key] = []
+                    log_action_info[key].append(value)
 
             if isinstance(visit_counts, dict):
                 actions_sampled = visit_counts["actions"]
@@ -185,8 +171,20 @@ def self_play_episode(
                 action[agent] = action_a
                 pi_target[agent] = pi_target_a
                 root_v_est[agent] = root_v_est_a
+                log_action_info["entropy_MCTS"][agent].append(
+                    mcts._compute_entropy(visit_counts_a)
+                )
                 if isinstance(visit_counts_a, dict):
                     actions_sampled_dict[agent] = visit_counts_a["actions"]
+                    log_action_info["STD_sampled"][agent].append(
+                        np.std(visit_counts_a["actions"])
+                    )
+                    for key, value in sigmas.items():
+                        if key not in log_action_info:
+                            log_action_info[key] = {
+                                agent_name: [] for agent_name in agents
+                            }
+                        log_action_info[key][agent].append(value)
 
         # Step env
         if _multi_agent:
