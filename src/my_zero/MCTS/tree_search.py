@@ -30,18 +30,24 @@ class Node:
         return self.value_sum / self.visit_count
 
 
-def puct_score(parent: Node, child: Node, c_puct: float) -> float:
+def puct_score(
+    q_value: float,
+    prior: float,
+    parent_visit_count: int,
+    child_visit_count: int,
+    c_puct: float,
+) -> float:
     pb_c = (
         c_puct
-        * child.prior
-        * math.sqrt(parent.visit_count + 1e-8)
-        / (1 + child.visit_count)
+        * prior
+        * math.sqrt(parent_visit_count + 1e-8)
+        / (1 + child_visit_count)
     )
-    return child.value() + pb_c
+    return q_value + pb_c
 
 
 def puct_score_batch(
-    child_values: np.ndarray,
+    q_values: np.ndarray,
     child_priors: np.ndarray,
     parent_visit_count: int,
     child_visit_counts: np.ndarray,
@@ -53,7 +59,7 @@ def puct_score_batch(
         * math.sqrt(parent_visit_count + 1e-8)
         / (1 + child_visit_counts)
     )
-    return child_values + pb_c
+    return q_values + pb_c
 
 
 def puct_mu_zero(
@@ -192,7 +198,13 @@ class MuZeroMCTS:
         best_action, best_child, best_score = None, None, -1e18
         for action, child in parent.children.items():
             if self.puct_opt == "puct":
-                score = puct_score(parent, child, self.c_puct)
+                score = puct_score(
+                    parent.action_values.get(action, 0.0),
+                    child.prior,
+                    parent.visit_count,
+                    child.visit_count,
+                    self.c_puct,
+                )
             else:
                 score = puct_mu_zero(
                     parent.action_values.get(action, 0.0),
@@ -214,7 +226,6 @@ class MuZeroMCTS:
         parent_action_values = []
         parent_visit_count = parent.visit_count
         parent_action_counts = []
-        child_values = []
         child_visit_counts = []
         child_priors = []
         actions = []
@@ -222,7 +233,6 @@ class MuZeroMCTS:
         for action, child in children.items():
             parent_action_values.append(parent.action_values.get(action, 0.0))
             parent_action_counts.append(parent.action_counts.get(action, 0))
-            child_values.append(child.value())
             child_visit_counts.append(child.visit_count)
             child_priors.append(child.prior)
             actions.append(action)
@@ -230,7 +240,7 @@ class MuZeroMCTS:
 
         if self.puct_opt == "puct":
             scores = puct_score_batch(
-                np.array(child_values),
+                np.array(parent_action_values),
                 np.array(child_priors),
                 parent_visit_count,
                 np.array(child_visit_counts),
