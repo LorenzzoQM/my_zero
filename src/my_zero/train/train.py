@@ -658,6 +658,13 @@ class Trainer:
             return_priorities=return_priorities,
         )
 
+    def _training_iterations(self):
+        return range(1, self.n_iterations + 1)
+
+    def _prioritized_replay_beta(self, iteration):
+        progress = (iteration - 1) / max(1, self.n_iterations - 1)
+        return self.per_beta0 + (self.per_beta1 - self.per_beta0) * progress
+
     def train(self):
         output_log = []
         self._start_log()
@@ -681,7 +688,7 @@ class Trainer:
             scheduler_class = getattr(torch.optim.lr_scheduler, self.lr_scheduler)
             scheduler = scheduler_class(optimizer, **self.lr_scheduler_params)
 
-        for it in range(1, self.n_iterations):
+        for it in self._training_iterations():
 
             if (
                 self.training_time_limit_seconds is not None
@@ -773,9 +780,7 @@ class Trainer:
                 # batch = replay.sample_positions(batch_size=self.batch_size)
 
                 if self.prioritized_replay:
-                    beta = self.per_beta0 + (self.per_beta1 - self.per_beta0) * (
-                        it / max(1, self.n_iterations - 1)
-                    )
+                    beta = self._prioritized_replay_beta(it)
 
                     batch, is_w, ep_indices = replay.sample_positions(
                         batch_size=self.batch_size, beta=beta
