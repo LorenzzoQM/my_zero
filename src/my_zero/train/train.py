@@ -642,6 +642,22 @@ class Trainer:
                 if param in self.mcts_config_self_play:
                     self.mcts_config_self_play[param] = schedule(it)
 
+    def _train_on_batch(self, optimizer, batch, is_weights, return_priorities):
+        return train_step(
+            self.net,
+            optimizer,
+            batch,
+            K=self.K,
+            n_step=self.n_step,
+            gamma=self.gamma,
+            device=self.device,
+            w_policy=self.w_policy,
+            w_value=self.w_value,
+            w_reward=self.w_reward,
+            is_weights=is_weights,
+            return_priorities=return_priorities,
+        )
+
     def train(self):
         output_log = []
         self._start_log()
@@ -770,14 +786,9 @@ class Trainer:
                     is_w = None
                     return_priorities = False
 
-                stats_step = train_step(
-                    self.net,
+                stats_step = self._train_on_batch(
                     optimizer,
                     batch,
-                    K=self.K,
-                    n_step=self.n_step,
-                    gamma=self.gamma,
-                    device=self.device,
                     is_weights=is_w,
                     return_priorities=return_priorities,
                 )
