@@ -43,6 +43,22 @@ def puct_score(parent: Node, child: Node, c_puct: float) -> float:
     return child.value() + pb_c
 
 
+def puct_score_batch(
+    child_values: np.ndarray,
+    child_priors: np.ndarray,
+    parent_visit_count: int,
+    child_visit_counts: np.ndarray,
+    c_puct: float,
+) -> np.ndarray:
+    pb_c = (
+        c_puct
+        * child_priors
+        * math.sqrt(parent_visit_count + 1e-8)
+        / (1 + child_visit_counts)
+    )
+    return child_values + pb_c
+
+
 def puct_mu_zero(
     Q_sa: float,
     P_sa: float,
@@ -103,6 +119,7 @@ class MuZeroSampledMCTS:
         puct_opt: str = "puct",
         num_sampled_actions_root: int | None = None,
         sample_from_uniform: int = 4,
+        batched_search: bool = True,
     ):
         self.f = prediction_net
         self.g = dynamics_net
@@ -112,9 +129,11 @@ class MuZeroSampledMCTS:
         self.c_puct = c_puct
         self.device = device
         self.beta_temp = beta_temp
+        if puct_opt not in {"puct", "muzero"}:
+            raise ValueError(f"Unknown puct_opt={puct_opt!r}")
         self.puct_opt = puct_opt
         self.sample_from_uniform = sample_from_uniform
-        self.batched_search = True
+        self.batched_search = batched_search
         assert (
             self.sample_from_uniform < self.num_sampled_actions
         ), "sample_from_uniform must be less than num_sampled_actions"
@@ -252,14 +271,33 @@ class MuZeroSampledMCTS:
             (children[a].prior for a in actions), dtype=np.float32, count=len(actions)
         )
 
-        scores = puct_mu_zero_batch(
-            Q_sa,
-            P_sa,
-            parent.visit_count,
-            N_sa,
-            self.q_min,
-            self.q_max,
-        )
+        if self.puct_opt == "puct":
+            child_values = np.fromiter(
+                (children[a].value() for a in actions),
+                dtype=np.float32,
+                count=len(actions),
+            )
+            child_visit_counts = np.fromiter(
+                (children[a].visit_count for a in actions),
+                dtype=np.float32,
+                count=len(actions),
+            )
+            scores = puct_score_batch(
+                child_values,
+                P_sa,
+                parent.visit_count,
+                child_visit_counts,
+                self.c_puct,
+            )
+        else:
+            scores = puct_mu_zero_batch(
+                Q_sa,
+                P_sa,
+                parent.visit_count,
+                N_sa,
+                self.q_min,
+                self.q_max,
+            )
 
         best_idx = int(np.argmax(scores))
         best_action = actions[best_idx]

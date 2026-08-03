@@ -40,6 +40,22 @@ def puct_score(parent: Node, child: Node, c_puct: float) -> float:
     return child.value() + pb_c
 
 
+def puct_score_batch(
+    child_values: np.ndarray,
+    child_priors: np.ndarray,
+    parent_visit_count: int,
+    child_visit_counts: np.ndarray,
+    c_puct: float,
+) -> np.ndarray:
+    pb_c = (
+        c_puct
+        * child_priors
+        * math.sqrt(parent_visit_count + 1e-8)
+        / (1 + child_visit_counts)
+    )
+    return child_values + pb_c
+
+
 def puct_mu_zero(
     Q_sa: float,
     P_sa: float,
@@ -107,6 +123,8 @@ class MuZeroMCTS:
         self.dirichlet_alpha = dirichlet_alpha
         self.dirichlet_eps = dirichlet_eps
         self.device = device
+        if puct_opt not in {"puct", "muzero"}:
+            raise ValueError(f"Unknown puct_opt={puct_opt!r}")
         self.puct_opt = puct_opt
 
         self.q_min = np.inf
@@ -196,24 +214,37 @@ class MuZeroMCTS:
         parent_action_values = []
         parent_visit_count = parent.visit_count
         parent_action_counts = []
+        child_values = []
+        child_visit_counts = []
         child_priors = []
         actions = []
         child_list = []
         for action, child in children.items():
             parent_action_values.append(parent.action_values.get(action, 0.0))
             parent_action_counts.append(parent.action_counts.get(action, 0))
+            child_values.append(child.value())
+            child_visit_counts.append(child.visit_count)
             child_priors.append(child.prior)
             actions.append(action)
             child_list.append(child)
 
-        scores = puct_mu_zero_batch(
-            np.array(parent_action_values),
-            np.array(child_priors),
-            parent_visit_count,
-            np.array(parent_action_counts),
-            self.q_min,
-            self.q_max,
-        )
+        if self.puct_opt == "puct":
+            scores = puct_score_batch(
+                np.array(child_values),
+                np.array(child_priors),
+                parent_visit_count,
+                np.array(child_visit_counts),
+                self.c_puct,
+            )
+        else:
+            scores = puct_mu_zero_batch(
+                np.array(parent_action_values),
+                np.array(child_priors),
+                parent_visit_count,
+                np.array(parent_action_counts),
+                self.q_min,
+                self.q_max,
+            )
 
         best_index = np.argmax(scores)
         return actions[best_index], child_list[best_index]
