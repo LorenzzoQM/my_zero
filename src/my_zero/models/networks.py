@@ -284,11 +284,11 @@ class PredictorMLPCont(PredictorMLP):
 
         if isinstance(logits, np.ndarray):
             logits = torch.as_tensor(logits, dtype=torch.float32)
-        mu, log_sigma = torch.chunk(logits, 2, dim=-1)
+        mu, log_std = torch.chunk(logits, 2, dim=-1)
+        log_std = log_std.clamp(LOG_STD_MIN, LOG_STD_MAX)
+        std = log_std.exp()
 
-        sigma = torch.exp(log_sigma).clamp(min=1e-3, max=1.0)
-
-        dist = Normal(mu, sigma)
+        dist = Normal(mu, std)
 
         # 4. Sample using the reparameterization trick
         z = dist.rsample(sample_shape=(n_samples,))
@@ -305,11 +305,11 @@ class PredictorMLPCont(PredictorMLP):
         logp = dist.log_prob(z).sum(-1) - torch.log(1 - a.pow(2) + 1e-6).sum(-1)
         logp -= torch.log((high - low) * 0.5).sum(dim=-1)
 
-        return a_scaled, torch.exp(logp), (sigma, log_sigma)
+        return a_scaled, torch.exp(logp), (std, log_std)
 
     def logp_squashed(self, logits: torch.Tensor, action: torch.Tensor):
         mu, log_std = torch.chunk(logits, 2, dim=-1)
-        log_std = log_std.clamp(-1, 2)
+        log_std = log_std.clamp(LOG_STD_MIN, LOG_STD_MAX)
         std = log_std.exp()
 
         # 1. unscale action back to [-1, 1]
