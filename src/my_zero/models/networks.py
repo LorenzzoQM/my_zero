@@ -142,6 +142,8 @@ class DynamicsMLP(nn.Module):
         self.num_actions = num_actions
         self.action_embed_dim = action_embed_dim
         self.body = body
+        if output_probabilities and support is None:
+            raise ValueError("support must be provided if output_probabilities is True")
         self.reward_head = reward_head or nn.Linear(
             self.latent_dim, len(support) if output_probabilities else 1
         )
@@ -151,14 +153,11 @@ class DynamicsMLP(nn.Module):
         else:
             self.action_embed = lambda x: x.view(x.size(0), -1)
         self.output_probabilities = output_probabilities
-        self.support = support
+        self.register_buffer("support", support)
         self.scale_value = (lambda x: x) if not scale_value else scale_value_function
         self.inverse_scale_value = (
             (lambda y: y) if not scale_value else inverse_scale_value_function
         )
-
-        if self.output_probabilities and self.support is None:
-            raise ValueError("support must be provided if output_probabilities is True")
 
     def forward(
         self, state: torch.Tensor, action: torch.Tensor, return_logits: bool = False
@@ -200,19 +199,18 @@ class PredictorMLP(nn.Module):
         super().__init__()
         self.body = body
         self.num_actions = num_actions
+        if output_probabilities and support is None:
+            raise ValueError("support must be provided if output_probabilities is True")
         self.policy_head = nn.Linear(self.body.output_dim, num_actions)
         self.value_head = nn.Linear(
             self.body.output_dim, len(support) if output_probabilities else 1
         )
         self.output_probabilities = output_probabilities
-        self.support = support
+        self.register_buffer("support", support)
         self.scale_value = (lambda x: x) if not scale_value else scale_value_function
         self.inverse_scale_value = (
             (lambda y: y) if not scale_value else inverse_scale_value_function
         )
-
-        if self.output_probabilities and self.support is None:
-            raise ValueError("support must be provided if output_probabilities is True")
 
     def forward(
         self, state: torch.Tensor, return_logits: bool = False
