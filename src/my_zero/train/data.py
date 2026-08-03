@@ -234,7 +234,10 @@ def self_play_episode(
         obs = next_obs
         t += 1
 
-        if (_multi_agent and any(truncated.values())) or truncated:
+        episode_truncated = (
+            any(truncated.values()) if _multi_agent else bool(truncated)
+        )
+        if episode_truncated:
             if not _multi_agent:
                 obs_t = (
                     torch.as_tensor(obs, dtype=torch.float32, device=device)
