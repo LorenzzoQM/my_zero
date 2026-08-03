@@ -327,7 +327,7 @@ class PrioritizedReplayBuffer:
         self._max_priority = 1.0
 
     def __len__(self) -> int:
-        return len(self.episodes)
+        return sum(len(ep["actions"]) for ep in self.episodes)
 
     def add_episode(self, ep: Episode) -> None:
         # Initialize new episodes with max priority so they get sampled at least once.
