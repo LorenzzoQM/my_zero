@@ -23,8 +23,9 @@ def inverse_scale_value_function(y, eps=0.001):
 
 def scalar_to_support(x, support):
     """
-    x: (B,)
-    returns: (B, SUPPORT_SIZE)
+    Project scalar values of shape (B,) onto consecutive integer support bins.
+
+    Returns a probability distribution with shape (B, support.numel()).
     """
     x = x.clamp(support[0], support[-1])
 
@@ -38,10 +39,10 @@ def scalar_to_support(x, support):
     high_idx = (high - support[0]).long()
 
     B = x.shape[0]
-    out = torch.zeros(B, support.numel(), device=x.device)
+    out = torch.zeros(B, support.numel(), device=x.device, dtype=x.dtype)
 
-    out.scatter_(1, low_idx.unsqueeze(1), p_low.unsqueeze(1))
-    out.scatter_(1, high_idx.unsqueeze(1), p_high.unsqueeze(1))
+    out.scatter_add_(1, low_idx.unsqueeze(1), p_low.unsqueeze(1))
+    out.scatter_add_(1, high_idx.unsqueeze(1), p_high.unsqueeze(1))
 
     return out
 
