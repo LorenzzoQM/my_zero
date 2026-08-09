@@ -127,9 +127,7 @@ def self_play_episode(
                 visit_counts, temperature=temperature, return_pi=True
             )
 
-            log_action_info["entropy_MCTS"].append(
-                mcts._compute_entropy(visit_counts)
-            )
+            log_action_info["entropy_MCTS"].append(mcts._compute_entropy(visit_counts))
             if isinstance(visit_counts, dict) and "actions" in visit_counts:
                 actions_sampled = visit_counts["actions"]
                 log_action_info["STD_sampled"].append(np.std(actions_sampled))
@@ -197,9 +195,16 @@ def self_play_episode(
         # print(f"Actions sampled: {actions_sampled_dict if _multi_agent else actions_sampled}")
         next_obs, reward, terminated, truncated, _ = env.step(action_copy)
         if _multi_agent:
-            done = any(terminated.values()) or any(truncated.values())
+            episode_terminated = any(terminated.values())
+            env_truncated = any(truncated.values())
         else:
-            done = bool(terminated or truncated)
+            episode_terminated = bool(terminated)
+            env_truncated = bool(truncated)
+        reached_max_steps = t + 1 >= max_steps and not (
+            episode_terminated or env_truncated
+        )
+        episode_truncated = env_truncated or reached_max_steps
+        done = episode_terminated or episode_truncated
 
         if _multi_agent:
             for agent in agents_list:
@@ -208,8 +213,8 @@ def self_play_episode(
                 )
                 episode_dict[agent]["actions"].append(action[agent])
                 episode_dict[agent]["rewards"].append(float(reward[agent]))
-                episode_dict[agent]["terminated"].append(any(terminated.values()))
-                episode_dict[agent]["truncated"].append(any(truncated.values()))
+                episode_dict[agent]["terminated"].append(episode_terminated)
+                episode_dict[agent]["truncated"].append(episode_truncated)
                 episode_dict[agent]["pis"].append(pi_target[agent].copy())
                 episode_dict[agent]["root_v_est"].append(float(root_v_est[agent]))
                 episode_dict[agent]["legal_masks"].append(legal_mask.astype(np.float32))
@@ -223,8 +228,8 @@ def self_play_episode(
             if actions_sampled is not None:
                 episode["actions_sampled"].append(actions_sampled)
             episode["rewards"].append(float(reward))
-            episode["terminated"].append(terminated)
-            episode["truncated"].append(truncated)
+            episode["terminated"].append(episode_terminated)
+            episode["truncated"].append(episode_truncated)
             episode["pis"].append(pi_target)
             episode["legal_masks"].append(legal_mask.astype(np.float32))
             episode["root_v_est"].append(float(root_v_est))
@@ -232,9 +237,6 @@ def self_play_episode(
         obs = next_obs
         t += 1
 
-        episode_truncated = (
-            any(truncated.values()) if _multi_agent else bool(truncated)
-        )
         if episode_truncated:
             if not _multi_agent:
                 obs_t = (
