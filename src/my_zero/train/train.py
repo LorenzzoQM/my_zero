@@ -42,7 +42,19 @@ def _mask_illegal_action_logits(
     return logits.masked_fill(~legal_mask, torch.finfo(logits.dtype).min)
 
 
+def _uncompiled_module(net):
+    return net._orig_mod if hasattr(net, "_orig_mod") else net
+
+
+def _uncompiled_state_dict(state_dict):
+    prefix = "_orig_mod."
+    if state_dict and all(key.startswith(prefix) for key in state_dict):
+        return {key.removeprefix(prefix): value for key, value in state_dict.items()}
+    return state_dict
+
+
 def save_checkpoint(path, net, optimizer, config, iteration):
+    net = _uncompiled_module(net)
     torch.save(
         {
             "iteration": iteration,
@@ -57,7 +69,9 @@ def save_checkpoint(path, net, optimizer, config, iteration):
 def load_checkpoint(path, net, optimizer=None, device="cpu"):
     checkpoint = torch.load(path, map_location=device)
 
-    net.load_state_dict(checkpoint["model_state_dict"])
+    net = _uncompiled_module(net)
+    model_state_dict = _uncompiled_state_dict(checkpoint["model_state_dict"])
+    net.load_state_dict(model_state_dict)
 
     if optimizer is not None:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
