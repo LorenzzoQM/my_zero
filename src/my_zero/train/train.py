@@ -28,6 +28,20 @@ def _per_sample_mse(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return loss
 
 
+def _mask_illegal_action_logits(
+    logits: torch.Tensor, legal_mask: torch.Tensor
+) -> torch.Tensor:
+    legal_mask = legal_mask.to(dtype=torch.bool)
+    if logits.shape != legal_mask.shape:
+        raise ValueError(
+            f"Policy logits shape {logits.shape} does not match legal mask shape "
+            f"{legal_mask.shape}"
+        )
+    if not torch.all(legal_mask.any(dim=-1)):
+        raise ValueError("Each policy target must have at least one legal action")
+    return logits.masked_fill(~legal_mask, torch.finfo(logits.dtype).min)
+
+
 def save_checkpoint(path, net, optimizer, config, iteration):
     torch.save(
         {
@@ -125,7 +139,7 @@ def make_targets(ep: dict, t0: int, K: int, n_step: int, gamma: float):
         if t < T:
             pi = ep["pis"][t]
         else:
-            pi = np.ones_like(ep["pis"][0], dtype=np.float32) / len(ep["pis"][0])
+            pi = np.zeros_like(ep["pis"][0], dtype=np.float32)
         target_pis.append(pi)
 
         # Reward target corresponds to reward after action at time t
@@ -227,7 +241,7 @@ def train_step(
             if t < len(ep["legal_masks"]):
                 masks.append(ep["legal_masks"][t])
             else:
-                masks.append(ep["legal_masks"][0])
+                masks.append(ep["legal_masks"][-1])
         legal_masks_list.append(masks)
 
     if len(ep["actions_sampled"]) > 0:
@@ -289,6 +303,8 @@ def train_step(
         )  # According to MuZero pseudocode supplementary material
 
         logits, v_pred = net.f(s, return_logits=return_logits_v)
+        if not getattr(net, "continuous_actions", False):
+            logits = _mask_illegal_action_logits(logits, legal_masks[:, k])
         # Policy loss: cross-entropy with target visit distribution
         # logp = F.log_softmax(logits, dim=-1)
         # policy_loss = -(target_pis[:, k, :] * logp).sum(dim=-1)
