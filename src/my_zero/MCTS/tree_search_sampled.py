@@ -152,15 +152,21 @@ class MuZeroSampledMCTS(MuZeroMCTS):
             {
                 "visit_counts": visit_counts,
                 "actions": [
-                    child.action.squeeze(0).cpu().numpy()
+                    child.action.squeeze(0).detach().cpu().numpy()
                     for child in root.children.values()
                 ],
             },
             root.value(),
             root_value,
             {
-                "sigmas": [root.sigmas[0] for child in root.children.values()],
-                "log_sigmas": [root.sigmas[1] for child in root.children.values()],
+                "sigmas": [
+                    root.sigmas[0].detach().cpu().numpy()
+                    for child in root.children.values()
+                ],
+                "log_sigmas": [
+                    root.sigmas[1].detach().cpu().numpy()
+                    for child in root.children.values()
+                ],
             },
         )
 
@@ -291,7 +297,7 @@ class MuZeroSampledMCTS(MuZeroMCTS):
         node.sigmas = sigmas
 
         node.children = {}
-        priors_beta = np.array(priors_beta)
+        priors_beta = priors_beta.detach().cpu().numpy().reshape(-1)
         priors_beta = priors_beta ** (1.0 / beta_temp)
         priors_beta = priors_beta / (priors_beta.sum() + 1e-8)
 

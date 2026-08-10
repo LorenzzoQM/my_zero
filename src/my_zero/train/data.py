@@ -201,7 +201,7 @@ def self_play_episode(
         if _multi_agent:
             for agent in agents_list:
                 episode_dict[agent]["obs"].append(
-                    obs_agents[agent].squeeze().numpy().copy()
+                    obs_agents[agent].squeeze().detach().cpu().numpy().copy()
                 )
                 episode_dict[agent]["actions"].append(action[agent])
                 episode_dict[agent]["rewards"].append(float(reward[agent]))

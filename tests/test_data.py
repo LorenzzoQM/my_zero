@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import torch
 from my_zero.train.data import (
     Episode,
     PrioritizedReplayBuffer,
@@ -135,6 +136,7 @@ def test_multi_agent_bootstrap_is_added_only_for_truncation(
 
     for agent in AGENTS:
         assert log_data["entropy_MCTS"][agent] == [0.25, 0.25]
+        assert all(isinstance(obs, np.ndarray) for obs in episodes[agent].obs)
 
 
 def test_multi_agent_sampled_action_statistics_are_logged_per_agent():
@@ -217,3 +219,29 @@ def test_replay_length_reports_transitions(replay):
 
     assert len(replay.episodes) == 2
     assert len(replay) == 5
+
+
+def accelerator_device():
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return None
+
+
+@pytest.mark.skipif(accelerator_device() is None, reason="No accelerator available")
+def test_multi_agent_observations_are_stored_as_numpy_on_accelerator():
+    embeddings = {agent: np.array([0.0], dtype=np.float32) for agent in AGENTS}
+    episodes, _ = self_play_episode(
+        env=FakeMultiAgentEnv(finish_by_truncation=False),
+        env_callback=None,
+        net=FakeNet(),
+        mcts=FakeMCTS(),
+        temperature=0.0,
+        device=accelerator_device(),
+        agents_embedding=embeddings,
+        add_root_noise=False,
+    )
+
+    for episode in episodes.values():
+        assert all(isinstance(obs, np.ndarray) for obs in episode.obs)
