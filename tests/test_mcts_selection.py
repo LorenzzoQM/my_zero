@@ -161,10 +161,8 @@ def test_sampled_mcts_returns_numpy_data_for_logging_and_replay():
     visit_data, action_info = run_sampled_mcts_on_device("cpu")
 
     assert all(isinstance(action, np.ndarray) for action in visit_data["actions"])
-    assert all(isinstance(sigma, np.ndarray) for sigma in action_info["sigmas"])
-    assert all(
-        isinstance(log_sigma, np.ndarray) for log_sigma in action_info["log_sigmas"]
-    )
+    assert isinstance(action_info["sigmas"], np.ndarray)
+    assert isinstance(action_info["log_sigmas"], np.ndarray)
 
 
 def accelerator_device():
@@ -180,4 +178,5 @@ def test_sampled_mcts_numpy_conversion_works_on_accelerator():
     visit_data, action_info = run_sampled_mcts_on_device(accelerator_device())
 
     assert all(isinstance(action, np.ndarray) for action in visit_data["actions"])
-    assert all(isinstance(sigma, np.ndarray) for sigma in action_info["sigmas"])
+    assert isinstance(action_info["sigmas"], np.ndarray)
+    assert isinstance(action_info["log_sigmas"], np.ndarray)

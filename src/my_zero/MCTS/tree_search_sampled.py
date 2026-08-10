@@ -75,9 +75,9 @@ class MuZeroSampledMCTS(MuZeroMCTS):
         self.beta_temp = beta_temp
         self.sample_from_uniform = sample_from_uniform
         self.batched_search = batched_search
-        assert self.sample_from_uniform < self.num_sampled_actions, (
-            "sample_from_uniform must be less than num_sampled_actions"
-        )
+        assert (
+            self.sample_from_uniform < self.num_sampled_actions
+        ), "sample_from_uniform must be less than num_sampled_actions"
         assert self.sample_from_uniform >= 0, "sample_from_uniform must be non-negative"
 
         if num_sampled_actions_root is None:
@@ -92,7 +92,7 @@ class MuZeroSampledMCTS(MuZeroMCTS):
         legal_actions: np.ndarray | None = None,  # bool mask shape (num_actions,)
         num_simulations: int = 50,
         add_root_noise: bool = True,
-    ):
+    ) -> tuple[dict, float, float, dict]:
         """Search from a latent root using sampled candidate actions."""
 
         # Root node
@@ -167,14 +167,8 @@ class MuZeroSampledMCTS(MuZeroMCTS):
             root.value(),
             root_value,
             {
-                "sigmas": [
-                    root.sigmas[0].detach().cpu().numpy()
-                    for child in root.children.values()
-                ],
-                "log_sigmas": [
-                    root.sigmas[1].detach().cpu().numpy()
-                    for child in root.children.values()
-                ],
+                "sigmas": root.sigmas[0].detach().cpu().numpy(),
+                "log_sigmas": root.sigmas[1].detach().cpu().numpy(),
             },
         )
 
@@ -316,7 +310,7 @@ class MuZeroSampledMCTS(MuZeroMCTS):
     @staticmethod
     def select_action_from_visits(
         visit_counts_dict: dict, temperature: float, return_pi: bool
-    ) -> int | tuple[int, np.ndarray]:
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         """Select a sampled action and optionally return its visit target."""
 
         visit_counts = visit_counts_dict["visit_counts"]

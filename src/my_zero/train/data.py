@@ -39,7 +39,7 @@ def self_play_episode(
     seed=None,
     agents_embedding: None | dict[str, np.ndarray] = None,
     add_root_noise: bool = True,
-) -> tuple[Episode, Any | None]:
+) -> tuple[Episode, Any | None] | tuple[dict[str, Episode], Any | None]:
     """Collect a single- or multi-agent episode using MuZero search."""
 
     obs, _ = env.reset(seed=seed)
@@ -354,7 +354,7 @@ class PrioritizedReplayBuffer:
         batch_size: int,
         beta: float = 0.4,
         rng: np.random.Generator | None = None,
-    ) -> tuple[list[tuple[int, int]], np.ndarray, np.ndarray]:
+    ) -> tuple[list[tuple[Episode, int]], np.ndarray, np.ndarray]:
         """Sample positions with episode priorities and importance weights."""
 
         assert len(self.episodes) > 0, "Replay is empty."
@@ -365,7 +365,7 @@ class PrioritizedReplayBuffer:
             len(self.episodes), size=batch_size, replace=True, p=probs
         )
 
-        samples: list[tuple[int, int]] = []
+        samples: list[tuple[Episode, int]] = []
         for epi in ep_indices:
             ep = self.episodes[int(epi)]
             T = len(ep.actions)  # number of transitions

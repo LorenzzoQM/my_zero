@@ -141,7 +141,7 @@ class DynamicsMLP(nn.Module):
         reward_head: nn.Module | None = None,
         normalize_latent: str | None = "l2",
         output_probabilities: bool = False,
-        support: torch.Tensor = None,
+        support: torch.Tensor | None = None,
         scale_value: bool = False,
     ):
 
@@ -202,7 +202,7 @@ class PredictorMLP(nn.Module):
         body: nn.Module,
         num_actions: int,
         output_probabilities: bool = False,
-        support: torch.Tensor = None,
+        support: torch.Tensor | None = None,
         scale_value: bool = False,
     ):
 
@@ -277,7 +277,7 @@ class PredictorMLPCont(PredictorMLP):
         body: nn.Module,
         num_actions: int,
         output_probabilities: bool = False,
-        support: torch.Tensor = None,
+        support: torch.Tensor | None = None,
         scale_value: bool = False,
         lims: tuple[float, float] = (-1.0, 1.0),
         squashed_actions: bool = False,

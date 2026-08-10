@@ -99,7 +99,7 @@ def puct_mu_zero_batch(
     Q_max: float,
     c1: float = 1.25,
     c2: float = 19652,
-) -> float:
+) -> np.ndarray:
     """Compute normalized MuZero PUCT scores for sibling edges."""
 
     q_range = Q_max - Q_min
@@ -153,7 +153,7 @@ class MuZeroMCTS:
         legal_actions: np.ndarray | None = None,  # bool mask shape (num_actions,)
         num_simulations: int = 50,
         add_root_noise: bool = True,
-    ):
+    ) -> tuple[np.ndarray, float, float, dict]:
         """Search from a latent root and return visits and value estimates."""
 
         # Root node
