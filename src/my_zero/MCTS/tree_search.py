@@ -39,10 +39,7 @@ def puct_score(
     c_puct: float,
 ) -> float:
     pb_c = (
-        c_puct
-        * prior
-        * math.sqrt(parent_visit_count + 1e-8)
-        / (1 + child_visit_count)
+        c_puct * prior * math.sqrt(parent_visit_count + 1e-8) / (1 + child_visit_count)
     )
     return q_value + pb_c
 

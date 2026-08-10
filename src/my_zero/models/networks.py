@@ -52,7 +52,6 @@ def support_to_scalar(probs, support):
 
 
 class BodyMLP(nn.Module):
-
     def __init__(
         self,
         width: int,
@@ -104,7 +103,6 @@ class BodyMLP(nn.Module):
 
 
 class EncoderMLP(nn.Module):
-
     def __init__(self, body: nn.Module, normalize: str | None = "l2"):
 
         super().__init__()
@@ -124,7 +122,6 @@ class EncoderMLP(nn.Module):
 
 
 class DynamicsMLP(nn.Module):
-
     def __init__(
         self,
         body: nn.Module,
@@ -186,7 +183,6 @@ class DynamicsMLP(nn.Module):
 
 
 class PredictorMLP(nn.Module):
-
     def __init__(
         self,
         body: nn.Module,
@@ -253,7 +249,6 @@ class PredictorMLP(nn.Module):
 
 
 class PredictorMLPCont(PredictorMLP):
-
     def __init__(
         self,
         body: nn.Module,
@@ -425,15 +420,15 @@ class MuZeroNet(nn.Module):
         h_config = net_config.get("h", None) if net_config else None
         g_config = net_config.get("g", None) if net_config else None
         f_config = net_config.get("f", None) if net_config else None
-        assert (h is not None) or (
-            h_config is not None
-        ), "Either h or h_config must be provided"
-        assert (g is not None) or (
-            g_config is not None
-        ), "Either g or g_config must be provided"
-        assert (f is not None) or (
-            f_config is not None
-        ), "Either f or f_config must be provided"
+        assert (h is not None) or (h_config is not None), (
+            "Either h or h_config must be provided"
+        )
+        assert (g is not None) or (g_config is not None), (
+            "Either g or g_config must be provided"
+        )
+        assert (f is not None) or (f_config is not None), (
+            "Either f or f_config must be provided"
+        )
 
         self.continuous_actions = (
             net_config.get("continuous_actions", False) if net_config else False

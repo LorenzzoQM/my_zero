@@ -224,7 +224,9 @@ def train_step(
                 else (
                     torch.tensor([0])
                     if isinstance(ep["actions"][0], torch.Tensor)
-                    else np.zeros(act_dim, dtype=np.int64) if act_dim is not None else 0
+                    else np.zeros(act_dim, dtype=np.int64)
+                    if act_dim is not None
+                    else 0
                 )
             )
         action_seqs.append(acts)
@@ -695,14 +697,13 @@ class Trainer:
             self.net.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
         )
         if self.lr_scheduler is not None:
-            assert hasattr(
-                torch.optim.lr_scheduler, self.lr_scheduler
-            ), f"Unknown lr_scheduler {self.lr_scheduler}"
+            assert hasattr(torch.optim.lr_scheduler, self.lr_scheduler), (
+                f"Unknown lr_scheduler {self.lr_scheduler}"
+            )
             scheduler_class = getattr(torch.optim.lr_scheduler, self.lr_scheduler)
             scheduler = scheduler_class(optimizer, **self.lr_scheduler_params)
 
         for it in self._training_iterations():
-
             if (
                 self.training_time_limit_seconds is not None
                 and time.time() - self.training_start_time

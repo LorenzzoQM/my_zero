@@ -26,7 +26,13 @@ def _init_self_play_worker(
     agents_embedding=None,
 ):
     """Runs once per worker process."""
-    global _WORKER_ENV, _WORKER_NET, _WORKER_DEVICE, _MCTS_CLASS, _ENV_CALLBACK, _AGENTS_EMBEDDING
+    global \
+        _WORKER_ENV, \
+        _WORKER_NET, \
+        _WORKER_DEVICE, \
+        _MCTS_CLASS, \
+        _ENV_CALLBACK, \
+        _AGENTS_EMBEDDING
 
     _WORKER_DEVICE = torch.device(device_str)
 

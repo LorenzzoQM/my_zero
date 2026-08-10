@@ -69,9 +69,9 @@ class MuZeroSampledMCTS(MuZeroMCTS):
         self.beta_temp = beta_temp
         self.sample_from_uniform = sample_from_uniform
         self.batched_search = batched_search
-        assert (
-            self.sample_from_uniform < self.num_sampled_actions
-        ), "sample_from_uniform must be less than num_sampled_actions"
+        assert self.sample_from_uniform < self.num_sampled_actions, (
+            "sample_from_uniform must be less than num_sampled_actions"
+        )
         assert self.sample_from_uniform >= 0, "sample_from_uniform must be non-negative"
 
         if num_sampled_actions_root is None:
