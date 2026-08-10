@@ -1,10 +1,16 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Union
-import math
 import numpy as np
 import torch
 from typing import Any
+from my_zero.MCTS.tree_search import (
+    MuZeroMCTS,
+    puct_score,
+    puct_mu_zero,
+    puct_score_batch,
+    puct_mu_zero_batch,
+)
 
 
 @dataclass
@@ -33,85 +39,7 @@ class Node:
         return self.value_sum / self.visit_count
 
 
-def puct_score(
-    q_value: float,
-    prior: float,
-    parent_visit_count: int,
-    child_visit_count: int,
-    c_puct: float,
-) -> float:
-    pb_c = (
-        c_puct
-        * prior
-        * math.sqrt(parent_visit_count + 1e-8)
-        / (1 + child_visit_count)
-    )
-    return q_value + pb_c
-
-
-def puct_score_batch(
-    q_values: np.ndarray,
-    child_priors: np.ndarray,
-    parent_visit_count: int,
-    child_visit_counts: np.ndarray,
-    c_puct: float,
-) -> np.ndarray:
-    pb_c = (
-        c_puct
-        * child_priors
-        * math.sqrt(parent_visit_count + 1e-8)
-        / (1 + child_visit_counts)
-    )
-    return q_values + pb_c
-
-
-def puct_mu_zero(
-    Q_sa: float,
-    P_sa: float,
-    N_s: float,
-    N_sa: float,
-    Q_min: float,
-    Q_max: float,
-    c1: float = 1.25,
-    c2: float = 19652,
-) -> float:
-
-    q_range = Q_max - Q_min
-    if math.isfinite(q_range) and math.isfinite(Q_min) and q_range > 1e-6:
-        Q_sa = (Q_sa - Q_min) / (Q_max - Q_min + 1e-8)
-    else:
-        Q_sa = 0.0
-
-    val = Q_sa + P_sa * (math.sqrt(N_s) / (1 + N_sa)) * (
-        c1 + math.log((N_s + c2 + 1) / c2)
-    )
-    return val
-
-
-def puct_mu_zero_batch(
-    Q_sa: np.ndarray,
-    P_sa: np.ndarray,
-    N_s: float,
-    N_sa: np.ndarray,
-    Q_min: float,
-    Q_max: float,
-    c1: float = 1.25,
-    c2: float = 19652,
-) -> float:
-
-    q_range = Q_max - Q_min
-    if math.isfinite(q_range) and math.isfinite(Q_min) and q_range > 1e-6:
-        Q_sa = (Q_sa - Q_min) / (q_range + 1e-8)
-    else:
-        Q_sa = np.zeros_like(Q_sa)
-
-    val = Q_sa + P_sa * (math.sqrt(N_s) / (1 + N_sa)) * (
-        c1 + math.log((N_s + c2 + 1) / c2)
-    )
-    return val
-
-
-class MuZeroSampledMCTS:
+class MuZeroSampledMCTS(MuZeroMCTS):
     def __init__(
         self,
         prediction_net,  # f
@@ -127,26 +55,23 @@ class MuZeroSampledMCTS:
         sample_from_uniform: int = 4,
         batched_search: bool = True,
     ):
-        self.f = prediction_net
-        self.g = dynamics_net
-        self.num_actions = num_actions
+        super().__init__(
+            prediction_net=prediction_net,
+            dynamics_net=dynamics_net,
+            num_actions=num_actions,
+            gamma=gamma,
+            c_puct=c_puct,
+            device=device,
+            puct_opt=puct_opt,
+        )
         self.num_sampled_actions = num_sampled_actions
-        self.gamma = gamma
-        self.c_puct = c_puct
-        self.device = device
         self.beta_temp = beta_temp
-        if puct_opt not in {"puct", "muzero"}:
-            raise ValueError(f"Unknown puct_opt={puct_opt!r}")
-        self.puct_opt = puct_opt
         self.sample_from_uniform = sample_from_uniform
         self.batched_search = batched_search
         assert (
             self.sample_from_uniform < self.num_sampled_actions
         ), "sample_from_uniform must be less than num_sampled_actions"
         assert self.sample_from_uniform >= 0, "sample_from_uniform must be non-negative"
-
-        self.q_min = np.inf
-        self.q_max = -np.inf
 
         if num_sampled_actions_root is None:
             self.num_sampled_actions_root = num_sampled_actions * 2
@@ -372,50 +297,6 @@ class MuZeroSampledMCTS:
         for i in range(num_sampled_actions):
             node.children[i] = Node(prior=float(priors_beta[i]), action=actions_list[i])
         return value
-
-    def _backpropagate(self, search_path, leaf_value: float, actions_taken):
-        """
-        search_path: [root, n1, n2, ..., leaf]
-        actions_taken: [a0, a1, ..., a_{L-1}] where a_i is action from search_path[i] -> search_path[i+1]
-        """
-        v = leaf_value
-
-        # Update leaf node stats first, then walk upward updating parent edge stats
-        for i in reversed(range(len(search_path))):
-            node = search_path[i]
-            node.value_sum += v
-            node.visit_count += 1
-
-            if i == 0:
-                break  # reached root
-
-            parent = search_path[i - 1]
-            action = actions_taken[i - 1]  # action taken at parent to reach node
-
-            q = (
-                node.reward + self.gamma * v
-            )  # reward is stored on child node (edge parent->child)
-
-            # # Update edge stats on the parent
-            if action not in parent.action_values:
-                parent.action_values[action] = 0.0
-                parent.action_counts[action] = 0
-
-            n = parent.action_counts.get(action, 0)
-            parent.action_values[action] += (q - parent.action_values[action]) / (n + 1)
-            parent.action_counts[action] = n + 1
-
-            new_q = parent.action_values[action]
-            self.q_min = min(self.q_min, new_q)
-            self.q_max = max(self.q_max, new_q)
-
-            v = q
-
-    @staticmethod
-    def _softmax(x: np.ndarray) -> np.ndarray:
-        x = x - np.max(x)
-        e = np.exp(x)
-        return e / (np.sum(e) + 1e-8)
 
     @staticmethod
     def select_action_from_visits(
