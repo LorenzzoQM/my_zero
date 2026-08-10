@@ -16,6 +16,8 @@ from my_zero.MCTS.tree_search import (
 
 @dataclass
 class Node:
+    """Store statistics, actions, and latent state for a sampled search node."""
+
     prior: float
     action: Any
     sigmas: tuple = field(default_factory=tuple)
@@ -41,6 +43,8 @@ class Node:
 
 
 class MuZeroSampledMCTS(MuZeroMCTS):
+    """Run Sampled MuZero search over a continuous action space."""
+
     def __init__(
         self,
         prediction_net,  # f
@@ -56,6 +60,8 @@ class MuZeroSampledMCTS(MuZeroMCTS):
         sample_from_uniform: int = 4,
         batched_search: bool = True,
     ):
+        """Initialize sampled-action search and proposal parameters."""
+
         super().__init__(
             prediction_net=prediction_net,
             dynamics_net=dynamics_net,
@@ -87,6 +93,8 @@ class MuZeroSampledMCTS(MuZeroMCTS):
         num_simulations: int = 50,
         add_root_noise: bool = True,
     ):
+        """Search from a latent root using sampled candidate actions."""
+
         # Root node
         root = Node(
             prior=1.0,
@@ -309,6 +317,7 @@ class MuZeroSampledMCTS(MuZeroMCTS):
     def select_action_from_visits(
         visit_counts_dict: dict, temperature: float, return_pi: bool
     ) -> int | tuple[int, np.ndarray]:
+        """Select a sampled action and optionally return its visit target."""
 
         visit_counts = visit_counts_dict["visit_counts"]
         actions = visit_counts_dict["actions"]

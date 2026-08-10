@@ -9,6 +9,8 @@ import torch
 
 @dataclass
 class Node:
+    """Store the statistics and latent state associated with one search node."""
+
     prior: float
     reward: float = 0.0  # reward from parent -> this node
     visit_count: int = 0
@@ -38,6 +40,8 @@ def puct_score(
     child_visit_count: int,
     c_puct: float,
 ) -> float:
+    """Compute the classic PUCT score for one state-action edge."""
+
     pb_c = (
         c_puct * prior * math.sqrt(parent_visit_count + 1e-8) / (1 + child_visit_count)
     )
@@ -51,6 +55,8 @@ def puct_score_batch(
     child_visit_counts: np.ndarray,
     c_puct: float,
 ) -> np.ndarray:
+    """Compute classic PUCT scores for a batch of sibling edges."""
+
     pb_c = (
         c_puct
         * child_priors
@@ -70,6 +76,7 @@ def puct_mu_zero(
     c1: float = 1.25,
     c2: float = 19652,
 ) -> float:
+    """Compute MuZero's normalized PUCT score for one edge."""
 
     q_range = Q_max - Q_min
     if math.isfinite(q_range) and math.isfinite(Q_min) and q_range > 1e-6:
@@ -93,6 +100,7 @@ def puct_mu_zero_batch(
     c1: float = 1.25,
     c2: float = 19652,
 ) -> float:
+    """Compute normalized MuZero PUCT scores for sibling edges."""
 
     q_range = Q_max - Q_min
     if math.isfinite(q_range) and math.isfinite(Q_min) and q_range > 1e-6:
@@ -107,6 +115,8 @@ def puct_mu_zero_batch(
 
 
 class MuZeroMCTS:
+    """Run Monte Carlo tree search over a discrete action space."""
+
     def __init__(
         self,
         prediction_net,  # f
@@ -119,6 +129,8 @@ class MuZeroMCTS:
         device: str = "cpu",
         puct_opt: str = "puct",
     ):
+        """Initialize search networks and PUCT hyperparameters."""
+
         self.f = prediction_net
         self.g = dynamics_net
         self.num_actions = num_actions
@@ -142,6 +154,8 @@ class MuZeroMCTS:
         num_simulations: int = 50,
         add_root_noise: bool = True,
     ):
+        """Search from a latent root and return visits and value estimates."""
+
         # Root node
         root = Node(prior=1.0, reward=0.0, latent=root_latent.detach().to(self.device))
 
@@ -346,6 +360,8 @@ class MuZeroMCTS:
     def select_action_from_visits(
         visit_counts: np.ndarray, temperature: float, return_pi: bool
     ) -> int | tuple[int, np.ndarray]:
+        """Select an action and optionally return its visit-count target."""
+
         if temperature <= 1e-8:
             action = int(np.argmax(visit_counts))
             pi_target = np.zeros_like(visit_counts, dtype=np.float32)

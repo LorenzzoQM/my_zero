@@ -9,6 +9,8 @@ import torch
 
 @dataclass
 class Episode:
+    """Store observations, search targets, and outcomes from one episode."""
+
     obs: np.ndarray | list[Any] | dict[str, np.ndarray | list[Any]]
     actions: np.ndarray | list[Any]
     actions_sampled: np.ndarray | list[Any] | dict[str, np.ndarray | list[Any]] | None
@@ -38,13 +40,8 @@ def self_play_episode(
     agents_embedding: None | dict[str, np.ndarray] = None,
     add_root_noise: bool = True,
 ) -> tuple[Episode, Any | None]:
-    """
-    net should expose:
-      net.h(obs_tensor)-> latent
-      net.f(latent_batch)-> (policy_logits, value)
-      net.g(latent_batch, action_batch)-> (latent_next, r_pred)
-    mcts.run(root_latent, legal_mask, num_simulations) -> visit_counts, root_value, root_value_raw
-    """
+    """Collect a single- or multi-agent episode using MuZero search."""
+
     obs, _ = env.reset(seed=seed)
     if agents_embedding is not None:
         _multi_agent = True
@@ -285,16 +282,22 @@ def self_play_episode(
 
 
 class ReplayBuffer:
+    """Store episodes and uniformly sample transition positions."""
+
     def __init__(self, capacity_episodes: int = 5000):
         self.episodes = deque(maxlen=capacity_episodes)
 
     def add_episode(self, ep: Episode):
+        """Append an episode, evicting the oldest one at capacity."""
+
         self.episodes.append(ep)
 
     def __len__(self):
         return sum(len(ep["actions"]) for ep in self.episodes)
 
     def sample_positions(self, batch_size: int):
+        """Sample episode-position pairs uniformly for recurrent training."""
+
         batch = []
         for _ in range(batch_size):
             ep = random.choice(self.episodes)
@@ -324,6 +327,8 @@ class PrioritizedReplayBuffer:
         return sum(len(ep["actions"]) for ep in self.episodes)
 
     def add_episode(self, ep: Episode) -> None:
+        """Insert an episode with the largest priority observed so far."""
+
         # Initialize new episodes with max priority so they get sampled at least once.
         ep.priority = self._max_priority
 
@@ -350,12 +355,8 @@ class PrioritizedReplayBuffer:
         beta: float = 0.4,
         rng: np.random.Generator | None = None,
     ) -> tuple[list[tuple[int, int]], np.ndarray, np.ndarray]:
-        """
-        Returns:
-          - samples: list of (episode_index, position_index)
-          - is_weights: (batch_size,) importance sampling weights
-          - ep_indices: (batch_size,) episode indices (for priority updates)
-        """
+        """Sample positions with episode priorities and importance weights."""
+
         assert len(self.episodes) > 0, "Replay is empty."
         rng = rng or np.random.default_rng()
 
@@ -385,9 +386,8 @@ class PrioritizedReplayBuffer:
     def update_priorities(
         self, ep_indices: np.ndarray, new_priorities: np.ndarray
     ) -> None:
-        """
-        Update episode priorities. A good choice is max(|td_error|) or mean over sampled positions.
-        """
+        """Update sampled episode priorities from new training errors."""
+
         ep_indices = np.asarray(ep_indices, dtype=np.int64)
         new_priorities = np.asarray(new_priorities, dtype=np.float64)
 

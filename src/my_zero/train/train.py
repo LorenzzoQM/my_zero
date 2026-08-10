@@ -54,6 +54,8 @@ def _uncompiled_state_dict(state_dict):
 
 
 def save_checkpoint(path, net, optimizer, config, iteration):
+    """Save uncompiled model weights, optimizer state, and training metadata."""
+
     net = _uncompiled_module(net)
     torch.save(
         {
@@ -67,6 +69,8 @@ def save_checkpoint(path, net, optimizer, config, iteration):
 
 
 def load_checkpoint(path, net, optimizer=None, device="cpu"):
+    """Restore a checkpoint into compiled or uncompiled training objects."""
+
     checkpoint = torch.load(path, map_location=device)
 
     net = _uncompiled_module(net)
@@ -140,6 +144,8 @@ def _worker_self_play(args):
 
 
 def make_targets(ep: dict, t0: int, K: int, n_step: int, gamma: float):
+    """Build policy, reward, and bootstrapped value targets for one unroll."""
+
     T = len(ep["actions"])
 
     target_pis = []
@@ -201,9 +207,8 @@ def train_step(
     is_weights=None,
     return_priorities=False,
 ):
-    """
-    batch: list of (episode, t0)
-    """
+    """Optimize the MuZero networks on a batch of recurrent unrolls."""
+
     # Build tensors
     (
         obs0_list,
@@ -387,6 +392,8 @@ def train_step(
 
 
 class Trainer:
+    """Coordinate self-play, replay, optimization, evaluation, and logging."""
+
     def __init__(
         self,
         env,
@@ -515,6 +522,8 @@ class Trainer:
         return self._self_play_pool
 
     def run_self_play_executor(self, replay, it):
+        """Collect parallel self-play episodes and add them to replay."""
+
         base = self.net._orig_mod if hasattr(self.net, "_orig_mod") else self.net
         net_state = {k: v.detach().cpu() for k, v in base.state_dict().items()}
 
@@ -693,6 +702,8 @@ class Trainer:
         return self.per_beta0 + (self.per_beta1 - self.per_beta0) * progress
 
     def train(self):
+        """Run the configured self-play and optimization iterations."""
+
         output_log = []
         self._start_log()
         self.training_start_time = time.time()
@@ -950,6 +961,8 @@ class Trainer:
         return output_log
 
     def close(self):
+        """Release self-play workers and logging resources owned by the trainer."""
+
         p = getattr(self, "_self_play_pool", None)
         if p is not None:
             logger.debug("Shutting down self-play pool...")

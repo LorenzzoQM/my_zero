@@ -48,10 +48,14 @@ def scalar_to_support(x, support):
 
 
 def support_to_scalar(probs, support):
+    """Decode categorical support probabilities to their expected scalar values."""
+
     return torch.sum(probs * support, dim=-1)
 
 
 class BodyMLP(nn.Module):
+    """Build the configurable MLP body shared by MuZero components."""
+
     def __init__(
         self,
         width: int,
@@ -88,6 +92,7 @@ class BodyMLP(nn.Module):
         self.out = nn.Linear(self.width, self.output_dim)
 
     def forward(self, observation: torch.Tensor) -> torch.Tensor:
+        """Encode an input batch through the configured MLP blocks."""
 
         x = observation
 
@@ -103,6 +108,8 @@ class BodyMLP(nn.Module):
 
 
 class EncoderMLP(nn.Module):
+    """Map observations to optionally normalized latent states."""
+
     def __init__(self, body: nn.Module, normalize: str | None = "l2"):
 
         super().__init__()
@@ -110,6 +117,8 @@ class EncoderMLP(nn.Module):
         self.normalize = normalize
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        """Return the latent representation of an observation batch."""
+
         s = self.body(obs)
 
         if self.normalize is None:
@@ -122,6 +131,8 @@ class EncoderMLP(nn.Module):
 
 
 class DynamicsMLP(nn.Module):
+    """Predict the next latent state and reward for an action."""
+
     def __init__(
         self,
         body: nn.Module,
@@ -159,6 +170,7 @@ class DynamicsMLP(nn.Module):
     def forward(
         self, state: torch.Tensor, action: torch.Tensor, return_logits: bool = False
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Apply the learned dynamics model to latent states and actions."""
 
         action_embed = self.action_embed(action)
         if state.dim() == 3:
@@ -183,6 +195,8 @@ class DynamicsMLP(nn.Module):
 
 
 class PredictorMLP(nn.Module):
+    """Predict a categorical policy and value from latent states."""
+
     def __init__(
         self,
         body: nn.Module,
@@ -211,6 +225,7 @@ class PredictorMLP(nn.Module):
     def forward(
         self, state: torch.Tensor, return_logits: bool = False
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return policy logits and either decoded values or value logits."""
 
         x = self.body(state)
         logits = self.policy_head(x)
@@ -227,6 +242,8 @@ class PredictorMLP(nn.Module):
             )
 
     def sample_action(self, logits: torch.Tensor) -> torch.Tensor:
+        """Sample discrete actions from categorical policy logits."""
+
         policy_dist = Categorical(logits=logits)
         action = policy_dist.sample()
         return action
@@ -235,6 +252,8 @@ class PredictorMLP(nn.Module):
         self,
         logits: torch.Tensor,
     ) -> torch.Tensor:
+        """Return log-probabilities for every discrete action."""
+
         logp = nn.functional.log_softmax(logits, dim=-1)
         return logp
 
@@ -243,12 +262,16 @@ class PredictorMLP(nn.Module):
         logits: torch.Tensor,
         target_probs: torch.Tensor,
     ) -> torch.Tensor:
+        """Compute cross-entropy against a target action distribution."""
+
         logp = self.logp(logits)
         loss = -torch.sum(target_probs * logp, dim=-1)
         return loss
 
 
 class PredictorMLPCont(PredictorMLP):
+    """Predict bounded continuous actions and latent-state values."""
+
     def __init__(
         self,
         body: nn.Module,
@@ -274,6 +297,7 @@ class PredictorMLPCont(PredictorMLP):
     def sample_action_squashed(
         self, logits: torch.Tensor, n_samples: int = 1, return_prob=True
     ) -> torch.Tensor:
+        """Sample actions from a tanh-squashed diagonal Gaussian policy."""
 
         if isinstance(logits, np.ndarray):
             logits = torch.as_tensor(logits, dtype=torch.float32)
@@ -301,6 +325,8 @@ class PredictorMLPCont(PredictorMLP):
         return a_scaled, torch.exp(logp), (std, log_std)
 
     def logp_squashed(self, logits: torch.Tensor, action: torch.Tensor):
+        """Evaluate actions under the tanh-squashed Gaussian policy."""
+
         mu, log_std = torch.chunk(logits, 2, dim=-1)
         log_std = log_std.clamp(LOG_STD_MIN, LOG_STD_MAX)
         std = log_std.exp()
@@ -344,6 +370,7 @@ class PredictorMLPCont(PredictorMLP):
         return loss
 
     def sample_action_diag(self, logits, n_samples=1, return_prob=True):
+        """Sample a Gaussian proposal, report its probability, and clip the action."""
 
         if isinstance(logits, np.ndarray):
             logits = torch.as_tensor(logits, dtype=torch.float32)
@@ -374,6 +401,7 @@ class PredictorMLPCont(PredictorMLP):
         return a, torch.exp(logp), (std, log_std)
 
     def logp_diag(self, logits, action):
+        """Evaluate bounded actions under the default Gaussian approximation."""
 
         if isinstance(logits, np.ndarray):
             logits = torch.as_tensor(logits, dtype=torch.float32)
@@ -396,18 +424,24 @@ class PredictorMLPCont(PredictorMLP):
         return loss
 
     def sample_action(self, logits: torch.Tensor, n_samples: int = 1, return_prob=True):
+        """Sample actions from the configured bounded continuous policy."""
+
         if self.squashed_actions:
             return self.sample_action_squashed(logits, n_samples, return_prob)
         else:
             return self.sample_action_diag(logits, n_samples, return_prob)
 
     def logp(self, logits: torch.Tensor, action: torch.Tensor):
+        """Evaluate actions under the configured continuous policy."""
+
         if self.squashed_actions:
             return self.logp_squashed(logits, action)
         else:
             return self.logp_diag(logits, action)
 
     def cross_entropy_loss(self, logits, actions, pi_target):
+        """Compute policy loss for sampled continuous actions."""
+
         if self.squashed_actions:
             return self.cross_entropy_loss_squashed(logits, actions, pi_target)
         else:
@@ -415,6 +449,8 @@ class PredictorMLPCont(PredictorMLP):
 
 
 class MuZeroNet(nn.Module):
+    """Combine MuZero representation, dynamics, and prediction networks."""
+
     def __init__(self, h=None, g=None, f=None, net_config=None):
         super().__init__()
         h_config = net_config.get("h", None) if net_config else None
