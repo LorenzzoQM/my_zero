@@ -5,9 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "my-zero"
 version = "0.1.0"
-description = "MuZero-like RL codebase"
+description = "A from-scratch implementation of MuZero and Sampled MuZero"
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [
+  { name = "LorenzzoQM" },
+]
+
 dependencies = [
   "numpy",
   "torch",
@@ -15,8 +19,25 @@ dependencies = [
   "tensorboard",
 ]
 
+[project.optional-dependencies]
+test = [
+  "pytest",
+]
+dev = [
+  "pytest",
+  "ruff",
+]
+
+[project.urls]
+Homepage = "https://github.com/LorenzzoQM/my_zero"
+Issues = "https://github.com/LorenzzoQM/my_zero/issues"
+Repository = "https://github.com/LorenzzoQM/my_zero"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
