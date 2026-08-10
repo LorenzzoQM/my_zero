@@ -1,15 +1,16 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Union
+from typing import Any
+
 import numpy as np
 import torch
-from typing import Any
 from my_zero.MCTS.tree_search import (
     MuZeroMCTS,
-    puct_score,
     puct_mu_zero,
-    puct_score_batch,
     puct_mu_zero_batch,
+    puct_score,
+    puct_score_batch,
 )
 
 
@@ -21,12 +22,12 @@ class Node:
     reward: float = 0.0  # reward from parent -> this node
     visit_count: int = 0
     value_sum: float = 0.0
-    children: Dict[int, "Node"] = field(default_factory=dict)
-    latent: Optional[torch.Tensor] = None  # (latent_dim,) tensor for this node
-    action_values: Dict[int, float] = field(
+    children: dict[int, Node] = field(default_factory=dict)
+    latent: torch.Tensor | None = None  # (latent_dim,) tensor for this node
+    action_values: dict[int, float] = field(
         default_factory=dict
     )  # Q values for each action
-    action_counts: Dict[int, int] = field(
+    action_counts: dict[int, int] = field(
         default_factory=dict
     )  # N values for each action
 
@@ -82,7 +83,7 @@ class MuZeroSampledMCTS(MuZeroMCTS):
     def run(
         self,
         root_latent: torch.Tensor,  # (latent_dim,)
-        legal_actions: Optional[np.ndarray] = None,  # bool mask shape (num_actions,)
+        legal_actions: np.ndarray | None = None,  # bool mask shape (num_actions,)
         num_simulations: int = 50,
         add_root_noise: bool = True,
     ):
@@ -239,10 +240,10 @@ class MuZeroSampledMCTS(MuZeroMCTS):
     def _expand(
         self,
         node: Node,
-        legal_actions: Optional[np.ndarray],
+        legal_actions: np.ndarray | None,
         add_noise: bool,
         beta_temp: float,
-        num_sampled_actions_node: Optional[int] = None,
+        num_sampled_actions_node: int | None = None,
     ):
         """
         Expands node using f(node.latent) to create priors, and sets children.
@@ -301,7 +302,7 @@ class MuZeroSampledMCTS(MuZeroMCTS):
     @staticmethod
     def select_action_from_visits(
         visit_counts_dict: dict, temperature: float, return_pi: bool
-    ) -> Union[int, tuple[int, np.ndarray]]:
+    ) -> int | tuple[int, np.ndarray]:
 
         visit_counts = visit_counts_dict["visit_counts"]
         actions = visit_counts_dict["actions"]

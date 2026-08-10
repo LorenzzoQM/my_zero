@@ -1,7 +1,8 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Dict, Optional, Union
+
 import math
+from dataclasses import dataclass, field
+
 import numpy as np
 import torch
 
@@ -12,12 +13,12 @@ class Node:
     reward: float = 0.0  # reward from parent -> this node
     visit_count: int = 0
     value_sum: float = 0.0
-    children: Dict[int, "Node"] = field(default_factory=dict)
-    latent: Optional[torch.Tensor] = None  # (latent_dim,) tensor for this node
-    action_values: Dict[int, float] = field(
+    children: dict[int, Node] = field(default_factory=dict)
+    latent: torch.Tensor | None = None  # (latent_dim,) tensor for this node
+    action_values: dict[int, float] = field(
         default_factory=dict
     )  # Q values for each action
-    action_counts: Dict[int, int] = field(
+    action_counts: dict[int, int] = field(
         default_factory=dict
     )  # N values for each action
 
@@ -140,7 +141,7 @@ class MuZeroMCTS:
     def run(
         self,
         root_latent: torch.Tensor,  # (latent_dim,)
-        legal_actions: Optional[np.ndarray] = None,  # bool mask shape (num_actions,)
+        legal_actions: np.ndarray | None = None,  # bool mask shape (num_actions,)
         num_simulations: int = 50,
         add_root_noise: bool = True,
     ):
@@ -260,7 +261,7 @@ class MuZeroMCTS:
         return actions[best_index], child_list[best_index]
 
     @torch.no_grad()
-    def _expand(self, node: Node, legal_actions: Optional[np.ndarray], add_noise: bool):
+    def _expand(self, node: Node, legal_actions: np.ndarray | None, add_noise: bool):
         """
         Expands node using f(node.latent) to create priors, and sets children.
         If node is not root, its latent is already set by dynamics from parent.
@@ -347,7 +348,7 @@ class MuZeroMCTS:
     @staticmethod
     def select_action_from_visits(
         visit_counts: np.ndarray, temperature: float, return_pi: bool
-    ) -> Union[int, tuple[int, np.ndarray]]:
+    ) -> int | tuple[int, np.ndarray]:
         if temperature <= 1e-8:
             action = int(np.argmax(visit_counts))
             pi_target = np.zeros_like(visit_counts, dtype=np.float32)

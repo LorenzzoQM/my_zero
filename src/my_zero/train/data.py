@@ -1,25 +1,23 @@
-import numpy as np
-import torch
 import random
 from collections import deque
-import numpy as np
 from dataclasses import dataclass
-from typing import List, Tuple, Any, Optional, Union
+from typing import Any
+
+import numpy as np
+import torch
 
 
 @dataclass
 class Episode:
-    obs: Union[np.ndarray, List[Any], dict[str, Union[np.ndarray, List[Any]]]]
-    actions: Union[np.ndarray, List[Any]]
-    actions_sampled: Optional[
-        Union[np.ndarray, List[Any], dict[str, Union[np.ndarray, List[Any]]]]
-    ]
-    rewards: Union[np.ndarray, List[Any], dict[str, Union[np.ndarray, List[Any]]]]
-    terminated: Union[np.ndarray, List[Any]]
-    truncated: Union[np.ndarray, List[Any]]
-    pis: Union[np.ndarray, List[Any]]
-    root_v_est: Union[np.ndarray, List[Any]]
-    legal_masks: Union[np.ndarray, List[Any]]
+    obs: np.ndarray | list[Any] | dict[str, np.ndarray | list[Any]]
+    actions: np.ndarray | list[Any]
+    actions_sampled: np.ndarray | list[Any] | dict[str, np.ndarray | list[Any]] | None
+    rewards: np.ndarray | list[Any] | dict[str, np.ndarray | list[Any]]
+    terminated: np.ndarray | list[Any]
+    truncated: np.ndarray | list[Any]
+    pis: np.ndarray | list[Any]
+    root_v_est: np.ndarray | list[Any]
+    legal_masks: np.ndarray | list[Any]
 
     priority: float = 1.0
 
@@ -37,9 +35,9 @@ def self_play_episode(
     max_steps=10_000,
     mcts_num_simulations=50,
     seed=None,
-    agents_embedding: Union[None, dict[str, np.ndarray]] = None,
+    agents_embedding: None | dict[str, np.ndarray] = None,
     add_root_noise: bool = True,
-) -> Tuple[Episode, Optional[Any]]:
+) -> tuple[Episode, Any | None]:
     """
     net should expose:
       net.h(obs_tensor)-> latent
@@ -97,18 +95,14 @@ def self_play_episode(
         # legal actions mask (Gym usually has all legal; keep hook for later)
         num_actions = mcts.num_actions
         legal_mask = np.ones(num_actions, dtype=bool)
-        # legal_mask = None
 
         # Encode observation -> latent
         if not _multi_agent:
-            obs_t = (
-                torch.as_tensor(obs, dtype=torch.float32, device=device)
-                # .unsqueeze(0)
-                .to(device)
+            obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device).to(
+                device
             )  # (1, obs_dim)
             actions_sampled = None
             with torch.no_grad():
-                # print("obs_t:", obs_t)
                 if obs_t.dim() == 1:
                     obs_t = obs_t.unsqueeze(0)  # (1, obs_dim)
                 else:
@@ -191,8 +185,6 @@ def self_play_episode(
         else:
             action_copy = action
 
-        # print(f"Step {t}: action={action_copy}, legal_mask={legal_mask}")
-        # print(f"Actions sampled: {actions_sampled_dict if _multi_agent else actions_sampled}")
         next_obs, reward, terminated, truncated, _ = env.step(action_copy)
         if _multi_agent:
             episode_terminated = any(terminated.values())
@@ -324,7 +316,7 @@ class PrioritizedReplayBuffer:
         self.alpha = float(alpha)
         self.eps = float(eps)
 
-        self.episodes: List[Episode] = []
+        self.episodes: list[Episode] = []
         self._pos = 0
         self._max_priority = 1.0
 
@@ -356,8 +348,8 @@ class PrioritizedReplayBuffer:
         self,
         batch_size: int,
         beta: float = 0.4,
-        rng: Optional[np.random.Generator] = None,
-    ) -> Tuple[List[Tuple[int, int]], np.ndarray, np.ndarray]:
+        rng: np.random.Generator | None = None,
+    ) -> tuple[list[tuple[int, int]], np.ndarray, np.ndarray]:
         """
         Returns:
           - samples: list of (episode_index, position_index)
@@ -372,7 +364,7 @@ class PrioritizedReplayBuffer:
             len(self.episodes), size=batch_size, replace=True, p=probs
         )
 
-        samples: List[Tuple[int, int]] = []
+        samples: list[tuple[int, int]] = []
         for epi in ep_indices:
             ep = self.episodes[int(epi)]
             T = len(ep.actions)  # number of transitions
@@ -402,5 +394,4 @@ class PrioritizedReplayBuffer:
         for epi, p in zip(ep_indices, new_priorities):
             p = float(abs(p) + self.eps)
             self.episodes[int(epi)].priority = p
-            if p > self._max_priority:
-                self._max_priority = p
+            self._max_priority = max(self._max_priority, p)

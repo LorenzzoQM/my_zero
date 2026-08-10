@@ -1,22 +1,22 @@
-import sys
-from my_zero.train.data import self_play_episode, ReplayBuffer, PrioritizedReplayBuffer
-from my_zero.models.networks import scalar_to_support, MuZeroNet
-from my_zero.MCTS.tree_search import MuZeroMCTS
-from my_zero.train.workers import _init_self_play_worker, _worker_self_play_one_episode
-from my_zero.utils.logger_config import SimFormatter
-import numpy as np
-import torch
-import torch.nn.functional as F
-import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import gymnasium as gym
-import pathlib
 import glob
-import os
 import json
 import logging
 import multiprocessing as mp
+import os
+import pathlib
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import chain
+
+import gymnasium as gym
+import numpy as np
+import torch
+import torch.nn.functional as F
+from my_zero.MCTS.tree_search import MuZeroMCTS
+from my_zero.models.networks import MuZeroNet, scalar_to_support
+from my_zero.train.data import PrioritizedReplayBuffer, ReplayBuffer, self_play_episode
+from my_zero.train.workers import _init_self_play_worker, _worker_self_play_one_episode
+from my_zero.utils.logger_config import SimFormatter
 
 logger = logging.getLogger(__name__)
 
@@ -305,9 +305,6 @@ def train_step(
         logits, v_pred = net.f(s, return_logits=return_logits_v)
         if not getattr(net, "continuous_actions", False):
             logits = _mask_illegal_action_logits(logits, legal_masks[:, k])
-        # Policy loss: cross-entropy with target visit distribution
-        # logp = F.log_softmax(logits, dim=-1)
-        # policy_loss = -(target_pis[:, k, :] * logp).sum(dim=-1)
         if len(actions_sampled_list) > 0:
             policy_loss = net.f.cross_entropy_loss(
                 logits, actions_sampled[:, k], target_pis[:, k]
@@ -460,7 +457,7 @@ class Trainer:
         self.eval_temperature = config.get("eval_temperature", 1e-8)
         self.eval_add_root_noise = config.get("eval_add_root_noise", False)
 
-        self.mcts_self_play_schedule = config.get("MCTS_self_play_schedule", None)
+        self.mcts_self_play_schedule = config.get("mcts_self_play_schedule", None)
 
     def _setup_logger(self):
         logger = logging.getLogger("my_zero")

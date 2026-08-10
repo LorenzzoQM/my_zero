@@ -1,9 +1,9 @@
-import torch
-import torch.nn as nn
-from typing import Union
-from torch.distributions import Categorical, Normal
-import numpy as np
 import math
+
+import numpy as np
+import torch
+from torch import nn
+from torch.distributions import Categorical, Normal
 
 LOG_STD_MIN = math.log(0.1)
 LOG_STD_MAX = math.log(1.0)

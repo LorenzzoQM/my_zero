@@ -1,9 +1,10 @@
-import os
-import torch
-import gymnasium as gym
-from my_zero.train.data import self_play_episode
 import logging
 import logging.handlers
+import os
+
+import gymnasium as gym
+import torch
+from my_zero.train.data import self_play_episode
 
 _WORKER_ENV = None
 _WORKER_NET = None

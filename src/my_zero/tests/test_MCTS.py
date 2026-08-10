@@ -1,4 +1,3 @@
-import pytest
 import numpy as np
 import torch
 from my_zero.MCTS.tree_search import MuZeroMCTS
